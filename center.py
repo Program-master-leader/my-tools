@@ -603,8 +603,136 @@ def get_removable_drives():
     return drives
 
 
-def backup_manager():
+# ── 工具管理 ──────────────────────────────────────────
+
+TOOLS_JSON = os.path.join(SCRIPT_DIR, "tools.json")
+
+def load_tools():
+    if os.path.exists(TOOLS_JSON):
+        import json
+        with open(TOOLS_JSON, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def save_tools(tools):
+    import json
+    with open(TOOLS_JSON, "w", encoding="utf-8") as f:
+        json.dump(tools, f, ensure_ascii=False, indent=2)
+
+def launch_tool(tool):
+    path = tool["path"]
+    ext  = os.path.splitext(path)[1].lower()
+    if not os.path.exists(path):
+        error(f"文件不存在: {path}")
+        return
+    if ext == ".py":
+        subprocess.Popen(f'start cmd /k python "{path}"', shell=True)
+    elif ext == ".jar":
+        subprocess.Popen(f'start cmd /k java -jar "{path}"', shell=True)
+    elif ext == ".exe":
+        subprocess.Popen(f'"{path}"', shell=True)
+    elif ext in (".bat", ".cmd"):
+        subprocess.Popen(f'start cmd /k "{path}"', shell=True)
+    elif ext == ".sh":
+        subprocess.Popen(f'bash "{path}"', shell=True)
+    else:
+        subprocess.Popen(f'start "" "{path}"', shell=True)
+    success(f"已启动: {tool['name']}")
+
+def tool_manager():
     while True:
+        header("🔧 工具管理")
+        tools = load_tools()
+
+        if tools:
+            table = Table(box=box.SIMPLE_HEAVY, show_lines=False, expand=True)
+            table.add_column("#", style="dim", width=5, justify="right")
+            table.add_column("名称", min_width=20)
+            table.add_column("类型", width=8)
+            table.add_column("路径", style="dim", min_width=25)
+            table.add_column("描述", style="dim")
+            for i, t in enumerate(tools, 1):
+                ext = os.path.splitext(t["path"])[1].upper() or "未知"
+                exists = "[green]●[/green]" if os.path.exists(t["path"]) else "[red]✗[/red]"
+                table.add_row(str(i), f"{exists} {t['name']}", ext, t["path"], t.get("desc", ""))
+            console.print(table)
+        else:
+            info("暂无工具，请先添加")
+
+        console.print("\n  [cyan]a[/cyan]  添加工具（拖入文件夹/文件）")
+        console.print("  [cyan]r[/cyan]  启动工具")
+        console.print("  [cyan]d[/cyan]  删除工具")
+        console.print("  [cyan]e[/cyan]  编辑工具信息")
+        console.print("  [cyan]0[/cyan]  返回\n")
+        choice = Prompt.ask("[bold]请选择[/bold]").strip().lower()
+
+        if choice == "0":
+            break
+
+        elif choice == "a":
+            header("➕ 添加工具")
+            console.print("[dim]将文件或文件夹拖入终端，按回车确认[/dim]\n")
+            raw = input("拖入路径: ").strip().strip('"')
+            if not raw or not os.path.exists(raw):
+                error("路径不存在")
+                pause()
+                continue
+            name = Prompt.ask("工具名称", default=os.path.basename(raw))
+            desc = Prompt.ask("简短描述（可留空）", default="")
+            tools.append({"name": name, "path": raw, "desc": desc})
+            save_tools(tools)
+            success(f"已添加: {name}")
+            pause()
+
+        elif choice == "r":
+            if not tools:
+                error("没有可启动的工具")
+                pause()
+                continue
+            try:
+                idx = int(Prompt.ask("启动第几个")) - 1
+                if 0 <= idx < len(tools):
+                    launch_tool(tools[idx])
+                else:
+                    error("序号超出范围")
+            except ValueError:
+                error("无效输入")
+            pause()
+
+        elif choice == "d":
+            if not tools:
+                pause()
+                continue
+            try:
+                idx = int(Prompt.ask("删除第几个（0取消）")) - 1
+                if 0 <= idx < len(tools):
+                    name = tools[idx]["name"]
+                    if Confirm.ask(f"确认从列表删除 [bold red]{name}[/bold red]？（不会删除文件本身）"):
+                        tools.pop(idx)
+                        save_tools(tools)
+                        success(f"已移除: {name}")
+            except ValueError:
+                error("无效输入")
+            pause()
+
+        elif choice == "e":
+            if not tools:
+                pause()
+                continue
+            try:
+                idx = int(Prompt.ask("编辑第几个")) - 1
+                if 0 <= idx < len(tools):
+                    t = tools[idx]
+                    t["name"] = Prompt.ask("新名称", default=t["name"])
+                    t["desc"] = Prompt.ask("新描述", default=t.get("desc", ""))
+                    save_tools(tools)
+                    success("已更新")
+            except ValueError:
+                error("无效输入")
+            pause()
+
+
+def backup_manager():    while True:
         header("💾 系统镜像备份")
         console.print("  [cyan]1[/cyan]  创建系统镜像（备份到移动硬盘）")
         console.print("  [cyan]2[/cyan]  查看已有备份")
@@ -733,8 +861,9 @@ def main():
         console.print("  [cyan]3[/cyan]  🗂   零散文件管理")
         console.print("  [cyan]4[/cyan]  💽  磁盘浏览 & 应用搜索")
         console.print("  [cyan]5[/cyan]  💾  系统镜像备份")
+        console.print("  [cyan]6[/cyan]  🛠   工具管理")
         console.print("  [cyan]0[/cyan]  退出\n")
-        choice = Prompt.ask("[bold]请选择[/bold]", choices=["0","1","2","3","4","5"], default="0")
+        choice = Prompt.ask("[bold]请选择[/bold]", choices=["0","1","2","3","4","5","6"], default="0")
 
         if choice == "0":
             console.print("\n[dim]再见 👋[/dim]\n")
@@ -749,6 +878,8 @@ def main():
             disk_explorer()
         elif choice == "5":
             backup_manager()
+        elif choice == "6":
+            tool_manager()
 
 if __name__ == "__main__":
     main()

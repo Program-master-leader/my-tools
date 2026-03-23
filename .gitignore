@@ -1,0 +1,46 @@
+# Python 编译缓存
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 工具生成的输出文件
+output.pdf
+*.pdf
+
+# 创业笔记（私密，不上传）
+ideas/
+
+# 临时文件
+*.tmp
+*.log
+*.bak
+*.old
+
+# 未完成下载
+*.crdownload
+*.part
+*.partial
+
+# Windows 系统文件
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# macOS 系统文件
+.DS_Store
+
+# 编辑器配置
+.vscode/
+.idea/
+*.swp
+
+# 打包产物
+dist/
+build/
+*.egg-info/

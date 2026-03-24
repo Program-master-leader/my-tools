@@ -50,10 +50,10 @@
   },
   {
     "name": "一键部署脚本",
-    "path": "deploy.py",
+    "path": "KHY的小工具.py",
     "desc": "新电脑一键还原所有工具和环境",
-    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/deploy.py",
-    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/deploy.py"
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/KHY%E7%9A%84%E5%B0%8F%E5%B7%A5%E5%85%B7.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/KHY%E7%9A%84%E5%B0%8F%E5%B7%A5%E5%85%B7.py"
   },
   {
     "name": "应用管理中心（图形界面）",

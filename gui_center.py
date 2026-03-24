@@ -277,8 +277,88 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         self.tools.append({"name": name, "path": real_path, "desc": desc, "url": "", "url_backup": ""})
         save_tools(self.tools)
         self.refresh_tools()
+        # 同步到 Git 仓库
+        self._git_sync(real_path, name)
 
-    def refresh_tools(self):
+    def _git_sync(self, src_path, tool_name):
+        """把新增工具同步到 Git 仓库（优先 Gitee，失败只推 Gitee 也算成功）"""
+        import shutil, threading
+
+        # 动态找 git 可执行文件
+        def find_git():
+            for candidate in [
+                "git",
+                r"D:\Program Files\Git\cmd\git.exe",
+                r"C:\Program Files\Git\cmd\git.exe",
+            ]:
+                try:
+                    r = subprocess.run([candidate, "--version"],
+                                       capture_output=True, timeout=3)
+                    if r.returncode == 0:
+                        return candidate
+                except Exception:
+                    continue
+            return None
+
+        def do_sync():
+            git = find_git()
+            if not git:
+                self.after(0, lambda: self._sync_toast("未找到 git，跳过同步", ok=False))
+                return
+
+            # 如果文件/文件夹不在脚本目录内，先复制过来
+            abs_src = os.path.abspath(src_path)
+            script_abs = os.path.abspath(SCRIPT_DIR)
+            if not abs_src.startswith(script_abs + os.sep) and abs_src != script_abs:
+                base_name = os.path.basename(abs_src.rstrip("\\/"))
+                dst = os.path.join(SCRIPT_DIR, base_name)
+                try:
+                    if os.path.isdir(abs_src):
+                        if os.path.exists(dst):
+                            shutil.rmtree(dst)
+                        shutil.copytree(abs_src, dst)
+                    else:
+                        shutil.copy2(abs_src, dst)
+                except Exception as e:
+                    self.after(0, lambda: self._sync_toast(f"复制失败: {e}", ok=False))
+                    return
+
+            # git add + commit
+            try:
+                subprocess.run([git, "-C", SCRIPT_DIR, "add", "-A"],
+                               capture_output=True)
+                r = subprocess.run(
+                    [git, "-C", SCRIPT_DIR, "commit", "-m", f"添加工具: {tool_name}"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace")
+                if "nothing to commit" in r.stdout:
+                    self.after(0, lambda: self._sync_toast("无变更，跳过推送"))
+                    return
+            except Exception as e:
+                self.after(0, lambda: self._sync_toast(f"git commit 失败: {e}", ok=False))
+                return
+
+            # 先推 Gitee，再推 GitHub，任一成功即可
+            for remote, label in [("gitee", "Gitee"), ("origin", "GitHub")]:
+                r = subprocess.run(
+                    [git, "-C", SCRIPT_DIR, "push", remote, "main"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace")
+                if r.returncode == 0:
+                    self.after(0, lambda l=label: self._sync_toast(f"已同步到 {l} ✓"))
+                    return
+
+            self.after(0, lambda: self._sync_toast("推送失败（网络问题），已保存本地 commit", ok=False))
+
+        threading.Thread(target=do_sync, daemon=True).start()
+
+    def _sync_toast(self, msg, ok=True):
+        """在状态栏短暂显示同步结果"""
+        color = ACCENT2 if ok else DANGER
+        if not hasattr(self, "_toast_label"):
+            self._toast_label = tk.Label(self, bg=BG, fg=color,
+                                          font=("微软雅黑", 9), anchor="w")
+            self._toast_label.pack(side="bottom", fill="x", padx=16, pady=2)
+        self._toast_label.config(text=f"  Git: {msg}", fg=color)
+        self.after(6000, lambda: self._toast_label.config(text=""))
         self.tools = load_tools()
         self.tree.delete(*self.tree.get_children())
         for t in self.tools:

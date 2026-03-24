@@ -31,12 +31,16 @@ def check_deps():
         import pdf2docx
     except ImportError:
         missing.append("pdf2docx")
+    try:
+        import fitz
+    except ImportError:
+        missing.append("PyMuPDF")
     return missing
 
 
 def install_deps(log_fn):
     import subprocess
-    for dep in ["docx2pdf", "pdf2docx"]:
+    for dep in ["docx2pdf", "pdf2docx", "PyMuPDF"]:
         log_fn(f"安装 {dep}...")
         r = subprocess.run(
             [sys.executable, "-m", "pip", "install", dep, "-q",
@@ -275,10 +279,30 @@ class App(tk.Tk):
 
     def _pdf_to_word(self, src, outdir):
         from pdf2docx import Converter
+        import fitz  # PyMuPDF，用于检测是否是扫描件
+
+        # 检测是否是扫描型PDF（页面只有图片没有文字）
+        doc = fitz.open(src)
+        total_text = ""
+        for page in doc:
+            total_text += page.get_text().strip()
+        doc.close()
+
+        if not total_text:
+            raise Exception(
+                "此PDF为扫描件（图片型），无法直接提取文字。\n"
+                "建议使用 Adobe Acrobat 或在线OCR工具转换。")
+
         name = os.path.splitext(os.path.basename(src))[0] + ".docx"
         out  = os.path.join(outdir, name)
         cv = Converter(src)
-        cv.convert(out, start=0, end=None)
+        cv.convert(out,
+                   start=0,
+                   end=None,
+                   multi_processing=False,
+                   connected_border_tolerance=0.5,   # 表格边框容差，提升表格识别
+                   line_overlap_threshold=0.9,        # 行重叠阈值
+                   min_section_height=20.0)           # 最小段落高度
         cv.close()
         return out
 

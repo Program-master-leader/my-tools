@@ -8,6 +8,13 @@ import subprocess
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 
+# 尝试导入拖拽支持
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    _DND_OK = True
+except ImportError:
+    _DND_OK = False
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TOOLS_JSON = os.path.join(SCRIPT_DIR, "tools.json")
 
@@ -68,7 +75,7 @@ class StyledButton(tk.Button):
         self.bind("<Leave>", lambda e: self.config(bg=color))
 
 
-class App(tk.Tk):
+class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("应用管理中心")
@@ -145,9 +152,24 @@ class App(tk.Tk):
         StyledButton(bar, "✕ 删除", self.delete_tool, DANGER).pack(side="right", padx=4)
         StyledButton(bar, "⬇ 下载", self.download_tool, "#89b4fa").pack(side="right", padx=4)
 
-        # 拖拽提示
-        tk.Label(frame, text="提示：点击「添加工具」或将文件路径粘贴添加",
-                 bg=BG, fg=TEXT_DIM, font=("微软雅黑", 9)).pack(anchor="w", padx=16)
+        # 拖拽区域
+        if _DND_OK:
+            drop_hint = "📂  将文件、文件夹或快捷方式拖拽到此处添加工具"
+            drop_color = BG3
+        else:
+            drop_hint = "提示：点击「添加工具」选择文件/文件夹（pip install tkinterdnd2 可启用拖拽）"
+            drop_color = BG2
+
+        self.drop_zone = tk.Label(
+            frame, text=drop_hint, bg=drop_color, fg=TEXT_DIM,
+            font=("微软雅黑", 9), pady=8, relief="flat", cursor="hand2")
+        self.drop_zone.pack(fill="x", padx=16, pady=(0, 4))
+
+        if _DND_OK:
+            self.drop_zone.drop_target_register(DND_FILES)
+            self.drop_zone.dnd_bind("<<Drop>>", self._on_drop)
+            self.drop_zone.bind("<Enter>", lambda e: self.drop_zone.config(bg=BTN_HOV))
+            self.drop_zone.bind("<Leave>", lambda e: self.drop_zone.config(bg=BG3))
 
         # 列表
         cols = ("名称", "类型", "描述", "路径", "状态")
@@ -164,7 +186,7 @@ class App(tk.Tk):
                   foreground=[("selected", ACCENT)])
 
         tree_frame = tk.Frame(frame, bg=BG)
-        tree_frame.pack(fill="both", expand=True, padx=16, pady=8)
+        tree_frame.pack(fill="both", expand=True, padx=16, pady=4)
 
         self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings",
                                   style="Custom.Treeview")
@@ -178,6 +200,83 @@ class App(tk.Tk):
         self.tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         self.tree.bind("<Double-1>", lambda e: self.run_tool())
+
+        # 列表也支持拖拽
+        if _DND_OK:
+            self.tree.drop_target_register(DND_FILES)
+            self.tree.dnd_bind("<<Drop>>", self._on_drop)
+
+    def _on_drop(self, event):
+        """处理拖拽进来的文件/文件夹"""
+        raw = event.data.strip()
+        # tkinterdnd2 返回的路径：多个文件用空格分隔，带空格的路径用{}包裹
+        paths = []
+        if raw.startswith("{"):
+            import re
+            paths = re.findall(r'\{([^}]+)\}|(\S+)', raw)
+            paths = [a or b for a, b in paths]
+        else:
+            paths = raw.split()
+        for p in paths:
+            p = p.strip().strip('"')
+            if p:
+                self._process_path(p)
+
+    def _resolve_lnk(self, lnk_path):
+        """解析 .lnk 快捷方式，返回真实目标路径"""
+        try:
+            import win32com.client
+            shell = win32com.client.Dispatch("WScript.Shell")
+            sc = shell.CreateShortCut(lnk_path)
+            target = sc.Targetpath
+            if target and os.path.exists(target):
+                return target
+        except Exception:
+            pass
+        return None
+
+    def _process_path(self, path):
+        """统一处理一个路径（文件/文件夹/快捷方式），询问名称后加入列表"""
+        real_path = path
+
+        # 解析快捷方式
+        if path.lower().endswith(".lnk"):
+            target = self._resolve_lnk(path)
+            if target:
+                real_path = target
+                if os.path.isfile(target):
+                    project_dir = os.path.dirname(target)
+                    ans = messagebox.askyesnocancel(
+                        "纳入项目管理",
+                        f"快捷方式指向：\n{target}\n\n"
+                        f"是  → 管理整个项目目录：\n{project_dir}\n\n"
+                        f"否  → 只管理此文件\n"
+                        f"取消 → 跳过")
+                    if ans is None:
+                        return
+                    if ans:
+                        real_path = project_dir
+            else:
+                messagebox.showwarning("解析失败",
+                    f"无法解析快捷方式目标路径\n{path}\n\n请确认已安装 pywin32")
+                return
+
+        # 检查是否已存在
+        for t in self.tools:
+            if os.path.normcase(resolve_path(t["path"])) == os.path.normcase(real_path):
+                messagebox.showinfo("已存在", f"「{t['name']}」已在列表中")
+                return
+
+        default_name = os.path.basename(real_path)
+        name = simpledialog.askstring("工具名称", f"路径：{real_path}\n\n请输入名称：",
+                                       initialvalue=default_name)
+        if not name:
+            return
+        desc = simpledialog.askstring("描述（可留空）", "简短描述这个工具的用途：") or ""
+
+        self.tools.append({"name": name, "path": real_path, "desc": desc, "url": "", "url_backup": ""})
+        save_tools(self.tools)
+        self.refresh_tools()
 
     def refresh_tools(self):
         self.tools = load_tools()
@@ -210,44 +309,8 @@ class App(tk.Tk):
                            ("所有文件", "*.*")])
         else:
             path = filedialog.askdirectory(title="选择工具文件夹或项目目录")
-        if not path:
-            return
-
-        # 解析快捷方式，取真实路径
-        real_path = path
-        if path.lower().endswith(".lnk"):
-            try:
-                import winreg
-                shell = __import__("win32com.client", fromlist=["Dispatch"]).Dispatch("WScript.Shell")
-                shortcut = shell.CreateShortCut(path)
-                target = shortcut.Targetpath
-                if target and os.path.exists(target):
-                    real_path = target
-                    # 如果目标是文件，取其所在目录作为项目根目录
-                    if os.path.isfile(target):
-                        project_dir = os.path.dirname(target)
-                        use_dir = messagebox.askyesno(
-                            "纳入项目管理",
-                            f"检测到快捷方式指向：\n{target}\n\n"
-                            f"是否将整个项目目录纳入管理？\n{project_dir}\n\n"
-                            f"是 = 管理整个项目目录\n否 = 只管理此文件")
-                        if use_dir:
-                            real_path = project_dir
-            except Exception:
-                pass
-
-        default_name = os.path.basename(real_path)
-        name = simpledialog.askstring("工具名称", "请输入名称：", initialvalue=default_name)
-        if not name:
-            return
-        desc = simpledialog.askstring("描述", "简短描述（可留空）：") or ""
-        github_url = simpledialog.askstring(
-            "下载地址（可选）",
-            "文件不存在时的下载直链\n（留空跳过）：") or ""
-
-        self.tools.append({"name": name, "path": real_path, "desc": desc, "url": github_url})
-        save_tools(self.tools)
-        self.refresh_tools()
+        if path:
+            self._process_path(path)
 
     def download_tool(self):
         idx = self._selected_idx()

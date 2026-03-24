@@ -1,1 +1,65 @@
-[]
+[
+  {
+    "name": "PDF 合并工具",
+    "path": "pdf_merger.py",
+    "desc": "合并多个PDF文件，支持拖拽和排序",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/pdf_merger.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/pdf_merger.py"
+  },
+  {
+    "name": "桌面整理工具",
+    "path": "desktop_organizer.py",
+    "desc": "按文件类型整理桌面，系统托盘常驻",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/desktop_organizer.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/desktop_organizer.py"
+  },
+  {
+    "name": "电脑清理工具",
+    "path": "cleaner.py",
+    "desc": "清理临时文件、重复文件、空文件夹",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/cleaner.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/cleaner.py"
+  },
+  {
+    "name": "桌面色调整理",
+    "path": "desktop_color_sort.py",
+    "desc": "按图片主色调重命名，使同色调图片聚集",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/desktop_color_sort.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/desktop_color_sort.py"
+  },
+  {
+    "name": "文件说明查询",
+    "path": "file_info.py",
+    "desc": "查询文件/文件夹说明，支持AI分析",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/file_info.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/file_info.py"
+  },
+  {
+    "name": "右键菜单注册",
+    "path": "register_menu.py",
+    "desc": "注册或卸载右键「查看文件说明」菜单",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/register_menu.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/register_menu.py"
+  },
+  {
+    "name": "应用管理中心（命令行版）",
+    "path": "center.py",
+    "desc": "命令行版管理中心",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/center.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/center.py"
+  },
+  {
+    "name": "一键部署脚本",
+    "path": "deploy.py",
+    "desc": "新电脑一键还原所有工具和环境",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/deploy.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/deploy.py"
+  },
+  {
+    "name": "应用管理中心（图形界面）",
+    "path": "gui_center.py",
+    "desc": "图形界面版管理中心",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/gui_center.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/gui_center.py"
+  }
+]

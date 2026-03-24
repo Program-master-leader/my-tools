@@ -570,50 +570,116 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         return d
 
     def _refresh_backups(self):
+        import datetime
         self.bak_tree.delete(*self.bak_tree.get_children())
         self.backup_records = []
+
         cfg = os.path.join(SCRIPT_DIR, "backup_dir.txt")
-        if not os.path.exists(cfg):
-            return
-        with open(cfg) as f:
-            base = f.read().strip()
-        if not os.path.isdir(base):
-            return
+        base = ""
+        if os.path.exists(cfg):
+            with open(cfg) as f:
+                base = f.read().strip()
 
         type_labels = {
             "system": "完整系统", "conly": "系统盘",
-            "pdf": "PDF文件", "word": "Word文档"
+            "pdf": "PDF文件", "word": "Word文档",
+            "wbadmin": "系统镜像(wbAdmin)"
         }
-        for name in sorted(os.listdir(base), reverse=True):
-            path = os.path.join(base, name)
-            if not os.path.isdir(path) and not os.path.isfile(path):
+
+        entries = []  # (sort_key, name, label, time_str, size_str, path, btype)
+
+        # ── 1. 扫描我们自己创建的备份（type_YYYYMMDD_HHMMSS 格式）──
+        if base and os.path.isdir(base):
+            for name in os.listdir(base):
+                path = os.path.join(base, name)
+                parts = name.split("_")
+                if len(parts) < 3:
+                    continue
+                btype = parts[0]
+                if btype not in ("system", "conly", "pdf", "word"):
+                    continue
+                label = type_labels.get(btype, btype)
+                try:
+                    ts = "_".join(parts[1:3])
+                    dt = datetime.datetime.strptime(ts, "%Y%m%d_%H%M%S")
+                    time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    sort_key = dt
+                except Exception:
+                    time_str = "未知时间"
+                    sort_key = datetime.datetime.min
+                size_str = self._calc_size(path)
+                entries.append((sort_key, name, label, time_str, size_str, path, btype))
+
+        # ── 2. 扫描 wbAdmin 系统镜像备份（WindowsImageBackup 目录）──
+        # wbAdmin 会在备份目标盘根目录创建 WindowsImageBackup\<计算机名>\Backup YYYY-MM-DD HHMMSS
+        search_roots = set()
+        if base:
+            drive = os.path.splitdrive(base)[0]
+            if drive:
+                search_roots.add(drive + "\\")
+        # 也扫描所有盘符
+        import string
+        for letter in string.ascii_uppercase:
+            d = letter + ":\\"
+            if os.path.isdir(d):
+                search_roots.add(d)
+
+        for root in search_roots:
+            wib = os.path.join(root, "WindowsImageBackup")
+            if not os.path.isdir(wib):
                 continue
-            # 只显示符合备份命名格式的条目: type_YYYYMMDD_HHMMSS
-            parts = name.split("_")
-            if len(parts) < 3:
-                continue
-            btype = parts[0]
-            if btype not in ("system", "conly", "pdf", "word"):
-                continue
-            label = type_labels.get(btype, btype)
-            try:
-                import datetime
-                ts = "_".join(name.split("_")[1:3])
-                dt = datetime.datetime.strptime(ts, "%Y%m%d_%H%M%S")
-                time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-            except:
-                time_str = "未知时间"
-            try:
-                if os.path.isdir(path):
-                    size = sum(os.path.getsize(os.path.join(r, f))
-                               for r, _, fs in os.walk(path) for f in fs)
-                else:
-                    size = os.path.getsize(path)
-                size_str = f"{size/1024/1024:.1f} MB"
-            except:
-                size_str = "-"
+            # 每个子目录是计算机名
+            for pc_name in os.listdir(wib):
+                pc_path = os.path.join(wib, pc_name)
+                if not os.path.isdir(pc_path):
+                    continue
+                # 子目录：Backup YYYY-MM-DD HHMMSS
+                for bak_name in os.listdir(pc_path):
+                    bak_path = os.path.join(pc_path, bak_name)
+                    if not os.path.isdir(bak_path):
+                        continue
+                    label = type_labels["wbadmin"]
+                    # 解析时间：文件夹名 "Backup 2026-03-24 021223"
+                    try:
+                        parts2 = bak_name.split(" ")
+                        dt = datetime.datetime.strptime(
+                            f"{parts2[1]} {parts2[2]}", "%Y-%m-%d %H%M%S")
+                        time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        sort_key = dt
+                    except Exception:
+                        # 用文件夹修改时间兜底
+                        try:
+                            mtime = os.path.getmtime(bak_path)
+                            dt = datetime.datetime.fromtimestamp(mtime)
+                            time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                            sort_key = dt
+                        except Exception:
+                            time_str = "未知时间"
+                            sort_key = datetime.datetime.min
+                    display_name = f"[系统镜像] {pc_name} / {bak_name}"
+                    size_str = self._calc_size(bak_path)
+                    entries.append((sort_key, display_name, label, time_str,
+                                    size_str, bak_path, "wbadmin"))
+
+        # 按时间倒序排列
+        entries.sort(key=lambda x: x[0], reverse=True)
+
+        for sort_key, name, label, time_str, size_str, path, btype in entries:
             self.backup_records.append({"name": name, "path": path, "type": btype})
             self.bak_tree.insert("", "end", values=(name, label, time_str, size_str, path))
+
+    def _calc_size(self, path):
+        try:
+            if os.path.isdir(path):
+                size = sum(os.path.getsize(os.path.join(r, f))
+                           for r, _, fs in os.walk(path) for f in fs)
+            else:
+                size = os.path.getsize(path)
+            if size >= 1024 ** 3:
+                return f"{size/1024**3:.1f} GB"
+            return f"{size/1024**2:.1f} MB"
+        except Exception:
+            return "-"
 
     def _start_backup(self):
         import ctypes, datetime, shutil, threading

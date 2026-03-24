@@ -359,6 +359,8 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             self._toast_label.pack(side="bottom", fill="x", padx=16, pady=2)
         self._toast_label.config(text=f"  Git: {msg}", fg=color)
         self.after(6000, lambda: self._toast_label.config(text=""))
+
+    def refresh_tools(self):
         self.tools = load_tools()
         self.tree.delete(*self.tree.get_children())
         for t in self.tools:

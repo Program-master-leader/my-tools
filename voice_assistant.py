@@ -219,6 +219,60 @@ def save_as_pdf(content, path):
     pdf.output(path)
 
 
+def load_tools_list():
+    """读取 tools.json"""
+    p = os.path.join(SCRIPT_DIR, "tools.json")
+    if os.path.exists(p):
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+
+def match_tool(text, tools):
+    """
+    用关键词 + qwen 双重匹配，找到最合适的工具。
+    返回 tool dict 或 None。
+    """
+    text_lower = text.lower()
+
+    # 第一步：关键词快速匹配（名称/描述）
+    scored = []
+    for t in tools:
+        score = 0
+        name = t.get("name", "").lower()
+        desc = t.get("desc", "").lower()
+        for word in name.split() + name.split("（") + desc.split("、"):
+            word = word.strip("）()，。 ")
+            if word and word in text_lower:
+                score += 2
+        # 部分字符匹配
+        for ch in name:
+            if ch in text:
+                score += 0.5
+        if score > 0:
+            scored.append((score, t))
+
+    if scored:
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[0][1]
+
+    # 第二步：让 qwen 判断（关键词没匹配到时）
+    tool_list_str = "\n".join(
+        f"- {t['name']}：{t.get('desc','')}" for t in tools)
+    prompt = (
+        f"用户说：「{text}」\n\n"
+        f"可用工具列表：\n{tool_list_str}\n\n"
+        f"请判断用户是否想启动某个工具。"
+        f"如果是，只回复工具名称（完全匹配列表中的名称）；"
+        f"如果不是，只回复「无」。不要解释。")
+    result = ask_ollama(prompt)
+    result = result.strip().strip("「」\"'")
+    for t in tools:
+        if t["name"] == result or result in t["name"]:
+            return t
+    return None
+
+
 def execute_command(text, log_fn, stream_fn):
     """解析并执行指令，返回结果描述"""
     text_lower = text.lower().strip()
@@ -254,6 +308,25 @@ def execute_command(text, log_fn, stream_fn):
         subprocess.Popen("start https://www.baidu.com", shell=True)
         return "已打开浏览器。"
 
+    # ── 工具调度（匹配 tools.json）──
+    launch_triggers = ["打开", "启动", "运行", "开启", "帮我打开", "帮我启动",
+                       "用", "使用", "调用"]
+    is_launch = any(w in text for w in launch_triggers)
+
+    if is_launch:
+        tools = load_tools_list()
+        tool = match_tool(text, tools)
+        if tool:
+            path = tool["path"]
+            if not os.path.isabs(path):
+                path = os.path.join(SCRIPT_DIR, path)
+            if os.path.exists(path):
+                log_fn(f"启动工具：{tool['name']}")
+                launch_tool(tool)
+                return f"✓ 已启动「{tool['name']}」"
+            else:
+                return f"「{tool['name']}」文件不存在：{path}"
+
     # ── 写文章/内容生成 ──
     write_triggers = ["写", "生成", "帮我写", "写一篇", "写一个", "创作", "起草"]
     is_write = any(w in text for w in write_triggers)
@@ -263,8 +336,6 @@ def execute_command(text, log_fn, stream_fn):
         save_dir = parse_save_path(text)
         fname    = parse_filename(text)
 
-        # 构建 AI 提示词
-        # 去掉路径、格式、文件名等元信息，只保留内容需求
         clean = re.sub(r"保存(到|在|为)[^\s，。]+", "", text)
         clean = re.sub(r"(命名为|文件名|叫做?|取名)[^\s，。]+", "", clean)
         clean = re.sub(r"(word|docx|pdf|txt|文档|文本)格式?", "", clean, flags=re.I)
@@ -277,9 +348,7 @@ def execute_command(text, log_fn, stream_fn):
         if not content or content.startswith("[AI错误"):
             return f"内容生成失败：{content}"
 
-        # 确定文件名
         if not fname:
-            # 从指令里提取主题作为文件名
             fname = re.sub(r"[写帮我生成创作起草一篇个]", "", clean)[:20].strip()
             fname = re.sub(r'[\\/:*?"<>|]', "", fname) or "小K生成"
 
@@ -298,7 +367,18 @@ def execute_command(text, log_fn, stream_fn):
         except Exception as e:
             return f"保存失败：{e}"
 
-    # ── 兜底：直接问 AI ──
+    # ── 兜底：直接问 AI，同时检查是否想启动工具 ──
+    tools = load_tools_list()
+    tool = match_tool(text, tools)
+    if tool:
+        path = tool["path"]
+        if not os.path.isabs(path):
+            path = os.path.join(SCRIPT_DIR, path)
+        if os.path.exists(path):
+            log_fn(f"识别到工具：{tool['name']}")
+            launch_tool(tool)
+            return f"✓ 已启动「{tool['name']}」"
+
     log_fn("正在思考...")
     stream_fn("", clear=True)
     answer = ask_ollama(text, stream_callback=lambda p: stream_fn(p))

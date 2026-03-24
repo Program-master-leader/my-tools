@@ -611,14 +611,14 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                 entries.append((sort_key, name, label, time_str, size_str, path, btype))
 
         # ── 2. 扫描 wbAdmin 系统镜像备份（WindowsImageBackup 目录）──
-        # wbAdmin 会在备份目标盘根目录创建 WindowsImageBackup\<计算机名>\Backup YYYY-MM-DD HHMMSS
+        # 结构：WindowsImageBackup\<计算机名>\  （里面有 Backup xxx / Catalog / Logs 等）
+        # 整个 <计算机名> 文件夹 = 一次完整备份，合并为一条记录
+        import string
         search_roots = set()
         if base:
             drive = os.path.splitdrive(base)[0]
             if drive:
                 search_roots.add(drive + "\\")
-        # 也扫描所有盘符
-        import string
         for letter in string.ascii_uppercase:
             d = letter + ":\\"
             if os.path.isdir(d):
@@ -628,38 +628,38 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             wib = os.path.join(root, "WindowsImageBackup")
             if not os.path.isdir(wib):
                 continue
-            # 每个子目录是计算机名
             for pc_name in os.listdir(wib):
                 pc_path = os.path.join(wib, pc_name)
                 if not os.path.isdir(pc_path):
                     continue
-                # 子目录：Backup YYYY-MM-DD HHMMSS
-                for bak_name in os.listdir(pc_path):
-                    bak_path = os.path.join(pc_path, bak_name)
-                    if not os.path.isdir(bak_path):
+                label = type_labels["wbadmin"]
+                # 找最早的 Backup xxx 子目录来确定备份时间
+                sort_key = datetime.datetime.min
+                time_str = "未知时间"
+                for sub in os.listdir(pc_path):
+                    if not sub.startswith("Backup "):
                         continue
-                    label = type_labels["wbadmin"]
-                    # 解析时间：文件夹名 "Backup 2026-03-24 021223"
                     try:
-                        parts2 = bak_name.split(" ")
+                        parts2 = sub.split(" ")
                         dt = datetime.datetime.strptime(
                             f"{parts2[1]} {parts2[2]}", "%Y-%m-%d %H%M%S")
-                        time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-                        sort_key = dt
-                    except Exception:
-                        # 用文件夹修改时间兜底
-                        try:
-                            mtime = os.path.getmtime(bak_path)
-                            dt = datetime.datetime.fromtimestamp(mtime)
-                            time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        if sort_key == datetime.datetime.min or dt < sort_key:
                             sort_key = dt
-                        except Exception:
-                            time_str = "未知时间"
-                            sort_key = datetime.datetime.min
-                    display_name = f"[系统镜像] {pc_name} / {bak_name}"
-                    size_str = self._calc_size(bak_path)
-                    entries.append((sort_key, display_name, label, time_str,
-                                    size_str, bak_path, "wbadmin"))
+                            time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        pass
+                # 兜底：用文件夹修改时间
+                if sort_key == datetime.datetime.min:
+                    try:
+                        mtime = os.path.getmtime(pc_path)
+                        sort_key = datetime.datetime.fromtimestamp(mtime)
+                        time_str = sort_key.strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        pass
+                display_name = f"[系统镜像] {pc_name}"
+                size_str = self._calc_size(pc_path)
+                entries.append((sort_key, display_name, label, time_str,
+                                size_str, pc_path, "wbadmin"))
 
         # 按时间倒序排列
         entries.sort(key=lambda x: x[0], reverse=True)
@@ -741,14 +741,18 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         rec  = self.backup_records[idx]
         btype = rec["type"]
 
-        if btype in ("system", "conly"):
+        if btype in ("system", "conly", "wbadmin"):
             messagebox.showinfo("系统还原说明",
                 "系统镜像还原步骤：\n\n"
-                "方法一（系统可启动）：\n"
-                "  控制面板 → 备份和还原 → 恢复系统设置\n\n"
-                "方法二（系统崩溃）：\n"
-                "  用Windows安装U盘启动 →\n"
-                "  修复计算机 → 系统映像恢复")
+                "【方法一】系统可以正常启动时：\n"
+                "  控制面板 → 备份和还原(Windows 7)\n"
+                "  → 恢复系统设置或计算机\n\n"
+                "【方法二】系统崩溃无法启动时：\n"
+                "  1. 用 Windows 安装U盘启动\n"
+                "  2. 选择「修复计算机」\n"
+                "  3. 疑难解答 → 高级选项\n"
+                "  4. 系统映像恢复\n\n"
+                f"备份位置：\n{rec['path']}")
         else:
             dst = filedialog.askdirectory(title="选择还原目标文件夹")
             if not dst:

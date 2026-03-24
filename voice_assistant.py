@@ -183,7 +183,7 @@ def parse_format(text):
 
 
 def save_as_txt(content, path):
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8-sig") as f:  # utf-8-sig = BOM，Windows记事本正常显示
         f.write(content)
 
 

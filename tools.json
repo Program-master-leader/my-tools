@@ -1,5 +1,12 @@
 [
   {
+    "name": "小K语音助手",
+    "path": "voice_assistant.py",
+    "desc": "语音控制电脑，写文章/关机/重启/查时间，唤醒词「小K」",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/voice_assistant.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/voice_assistant.py"
+  },
+  {
     "name": "Word↔PDF 转换工具",
     "path": "word_pdf_converter.py",
     "desc": "Word转PDF、PDF转Word，支持批量拖拽",

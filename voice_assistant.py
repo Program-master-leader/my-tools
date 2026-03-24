@@ -20,6 +20,13 @@ SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SAVE = "D:\\"
 WAKE_WORDS   = ["小k", "小K", "xiaok", "xiaoK", "小可", "小客"]
 
+# 语音识别引擎：baidu / google / whisper
+# 百度需填 APP_ID / API_KEY / SECRET_KEY（免费注册：https://ai.baidu.com/）
+ASR_ENGINE    = "baidu"
+BAIDU_APP_ID  = ""   # 填入你的 APP_ID
+BAIDU_API_KEY = ""   # 填入你的 API Key
+BAIDU_SECRET  = ""   # 填入你的 Secret Key
+
 # ── 颜色 ──────────────────────────────────────────────
 BG      = "#1e1e2e"
 BG2     = "#2a2a3e"
@@ -49,10 +56,45 @@ def record_audio(duration=6, samplerate=16000):
 
 
 def record_and_recognize(timeout=5, phrase_limit=10):
-    """录音并识别，返回文字（中文）"""
+    """录音并识别，自动选择可用引擎"""
     import speech_recognition as sr
     r = sr.Recognizer()
     audio = record_audio(duration=phrase_limit)
+
+    # 百度（国内首选，需配置 Key）
+    if ASR_ENGINE == "baidu" and BAIDU_APP_ID:
+        try:
+            text = r.recognize_baidu(audio,
+                                     app_id=BAIDU_APP_ID,
+                                     api_key=BAIDU_API_KEY,
+                                     secret_key=BAIDU_SECRET)
+            return text
+        except Exception:
+            pass
+
+    # Whisper 本地（离线，需安装 openai-whisper）
+    try:
+        import whisper
+        import numpy as np
+        import tempfile, wave
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            tmp = f.name
+        raw = audio.get_raw_data(convert_rate=16000, convert_width=2)
+        with wave.open(tmp, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(raw)
+        model = whisper.load_model("base")
+        result = model.transcribe(tmp, language="zh")
+        os.unlink(tmp)
+        return result["text"].strip()
+    except ImportError:
+        pass
+    except Exception:
+        pass
+
+    # Google（需联网，国内可能被墙）
     try:
         text = r.recognize_google(audio, language="zh-CN")
         return text
@@ -273,7 +315,19 @@ class VoiceAssistant(tk.Tk):
         self.listening = False
         self.wake_mode = False   # 是否处于唤醒监听状态
         self._build_ui()
+        self._load_asr_config()
         self._check_deps()
+
+    def _load_asr_config(self):
+        global ASR_ENGINE, BAIDU_APP_ID, BAIDU_API_KEY, BAIDU_SECRET
+        cfg_file = os.path.join(SCRIPT_DIR, "voice_config.json")
+        if os.path.exists(cfg_file):
+            with open(cfg_file, encoding="utf-8") as f:
+                cfg = json.load(f)
+            ASR_ENGINE    = cfg.get("engine", "baidu")
+            BAIDU_APP_ID  = cfg.get("baidu_app_id", "")
+            BAIDU_API_KEY = cfg.get("baidu_api_key", "")
+            BAIDU_SECRET  = cfg.get("baidu_secret", "")
 
     def _build_ui(self):
         # 标题栏
@@ -331,6 +385,10 @@ class VoiceAssistant(tk.Tk):
                   relief="flat", font=("微软雅黑", 10), padx=12, pady=8,
                   cursor="hand2", command=self._clear_chat).pack(side="right", padx=4)
 
+        tk.Button(btn_frame, text="⚙ 语音设置", bg="#45475a", fg=TEXT,
+                  relief="flat", font=("微软雅黑", 10), padx=12, pady=8,
+                  cursor="hand2", command=self._open_asr_settings).pack(side="right", padx=4)
+
         self._append("system", "小K已就绪。说「小K」唤醒，或直接输入指令。\n"
                                 "支持：写文章、关机、重启、查时间、打开程序等。\n")
 
@@ -358,6 +416,57 @@ class VoiceAssistant(tk.Tk):
 
     def _set_status(self, text, color=TEXT_DIM):
         self.status_label.config(text=text, fg=color)
+
+    def _open_asr_settings(self):
+        """语音识别配置窗口"""
+        win = tk.Toplevel(self)
+        win.title("语音识别设置")
+        win.geometry("460x320")
+        win.configure(bg=BG)
+        win.resizable(False, False)
+
+        cfg_file = os.path.join(SCRIPT_DIR, "voice_config.json")
+        cfg = {}
+        if os.path.exists(cfg_file):
+            with open(cfg_file, encoding="utf-8") as f:
+                cfg = json.load(f)
+
+        tk.Label(win, text="语音识别引擎设置", bg=BG, fg=ACCENT,
+                 font=("微软雅黑", 12, "bold")).pack(pady=(16, 4))
+        tk.Label(win, text="百度语音（国内推荐）免费注册：https://ai.baidu.com/",
+                 bg=BG, fg=TEXT_DIM, font=("微软雅黑", 8)).pack()
+
+        fields = [("引擎 (baidu/google/whisper)", "engine", "baidu"),
+                  ("百度 APP_ID",  "baidu_app_id",  ""),
+                  ("百度 API_KEY", "baidu_api_key", ""),
+                  ("百度 SECRET",  "baidu_secret",  "")]
+        vars_ = {}
+        for label, key, default in fields:
+            row = tk.Frame(win, bg=BG)
+            row.pack(fill="x", padx=24, pady=4)
+            tk.Label(row, text=label, bg=BG, fg=TEXT,
+                     font=("微软雅黑", 9), width=22, anchor="w").pack(side="left")
+            v = tk.StringVar(value=cfg.get(key, default))
+            vars_[key] = v
+            tk.Entry(row, textvariable=v, bg=BG2, fg=TEXT,
+                     insertbackground=TEXT, relief="flat",
+                     font=("微软雅黑", 9), width=24).pack(side="left", padx=6)
+
+        def save():
+            global ASR_ENGINE, BAIDU_APP_ID, BAIDU_API_KEY, BAIDU_SECRET
+            new_cfg = {k: v.get().strip() for k, v in vars_.items()}
+            with open(cfg_file, "w", encoding="utf-8") as f:
+                json.dump(new_cfg, f, ensure_ascii=False, indent=2)
+            ASR_ENGINE    = new_cfg.get("engine", "baidu")
+            BAIDU_APP_ID  = new_cfg.get("baidu_app_id", "")
+            BAIDU_API_KEY = new_cfg.get("baidu_api_key", "")
+            BAIDU_SECRET  = new_cfg.get("baidu_secret", "")
+            self._append("system", f"✓ 语音引擎已切换为：{ASR_ENGINE}")
+            win.destroy()
+
+        tk.Button(win, text="保存", bg=ACCENT, fg=BG, relief="flat",
+                  font=("微软雅黑", 10), padx=20, pady=6,
+                  cursor="hand2", command=save).pack(pady=16)
 
     def _clear_chat(self):
         self.chat.config(state="normal")

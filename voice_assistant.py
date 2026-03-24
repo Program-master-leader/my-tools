@@ -20,12 +20,12 @@ SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SAVE = "D:\\"
 WAKE_WORDS   = ["小k", "小K", "xiaok", "xiaoK", "小可", "小客"]
 
-# 语音识别引擎：baidu / google / whisper
-# 百度需填 APP_ID / API_KEY / SECRET_KEY（免费注册：https://ai.baidu.com/）
-ASR_ENGINE    = "baidu"
-BAIDU_APP_ID  = ""   # 填入你的 APP_ID
-BAIDU_API_KEY = ""   # 填入你的 API Key
-BAIDU_SECRET  = ""   # 填入你的 Secret Key
+# 语音识别引擎：whisper（本地离线）/ baidu / google
+# whisper 首次运行自动下载模型（~140MB），之后完全离线免费
+ASR_ENGINE    = "whisper"
+BAIDU_APP_ID  = ""
+BAIDU_API_KEY = ""
+BAIDU_SECRET  = ""
 
 # ── 颜色 ──────────────────────────────────────────────
 BG      = "#1e1e2e"
@@ -61,7 +61,32 @@ def record_and_recognize(timeout=5, phrase_limit=10):
     r = sr.Recognizer()
     audio = record_audio(duration=phrase_limit)
 
-    # 百度（国内首选，需配置 Key）
+    # Whisper 本地离线（首选，不需要网络和账号）
+    if ASR_ENGINE == "whisper":
+        try:
+            import whisper
+            import tempfile, wave
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                tmp = f.name
+            raw = audio.get_raw_data(convert_rate=16000, convert_width=2)
+            with wave.open(tmp, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(raw)
+            # 懒加载模型，只加载一次
+            if not hasattr(record_and_recognize, "_whisper_model"):
+                record_and_recognize._whisper_model = whisper.load_model("base")
+            result = record_and_recognize._whisper_model.transcribe(
+                tmp, language="zh", fp16=False)
+            os.unlink(tmp)
+            return result["text"].strip()
+        except ImportError:
+            pass  # 没装 whisper，继续往下
+        except Exception as e:
+            raise e
+
+    # 百度（国内，需配置 Key）
     if ASR_ENGINE == "baidu" and BAIDU_APP_ID:
         try:
             text = r.recognize_baidu(audio,
@@ -71,28 +96,6 @@ def record_and_recognize(timeout=5, phrase_limit=10):
             return text
         except Exception:
             pass
-
-    # Whisper 本地（离线，需安装 openai-whisper）
-    try:
-        import whisper
-        import numpy as np
-        import tempfile, wave
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            tmp = f.name
-        raw = audio.get_raw_data(convert_rate=16000, convert_width=2)
-        with wave.open(tmp, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(16000)
-            wf.writeframes(raw)
-        model = whisper.load_model("base")
-        result = model.transcribe(tmp, language="zh")
-        os.unlink(tmp)
-        return result["text"].strip()
-    except ImportError:
-        pass
-    except Exception:
-        pass
 
     # Google（需联网，国内可能被墙）
     try:
@@ -390,7 +393,8 @@ class VoiceAssistant(tk.Tk):
                   cursor="hand2", command=self._open_asr_settings).pack(side="right", padx=4)
 
         self._append("system", "小K已就绪。说「小K」唤醒，或直接输入指令。\n"
-                                "支持：写文章、关机、重启、查时间、打开程序等。\n")
+                                "支持：写文章、关机、重启、查时间、打开程序等。\n"
+                                "语音识别：Whisper本地离线（首次使用自动下载模型~140MB）\n")
 
     def _append(self, tag, text):
         self.chat.config(state="normal")

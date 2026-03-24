@@ -1,2 +1,2 @@
 @echo off
-python "%~dp0center.py"
+pythonw "%~dp0gui_center.py"

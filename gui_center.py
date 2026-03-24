@@ -202,26 +202,50 @@ class App(tk.Tk):
         return self.tree.index(sel[0])
 
     def add_tool(self):
-        choice = messagebox.askquestion("添加工具", "添加文件还是文件夹？\n\n是 = 文件\n否 = 文件夹")
+        choice = messagebox.askquestion("添加工具", "添加文件还是文件夹？\n\n是 = 文件/快捷方式\n否 = 文件夹")
         if choice == "yes":
             path = filedialog.askopenfilename(
-                title="选择工具文件",
-                filetypes=[("所有支持的文件", "*.py *.jar *.exe *.bat *.cmd *.sh"),
+                title="选择工具文件或快捷方式",
+                filetypes=[("所有支持的文件", "*.py *.jar *.exe *.bat *.cmd *.sh *.lnk"),
                            ("所有文件", "*.*")])
         else:
-            path = filedialog.askdirectory(title="选择工具文件夹")
+            path = filedialog.askdirectory(title="选择工具文件夹或项目目录")
         if not path:
             return
-        name = simpledialog.askstring("工具名称", "请输入工具名称：",
-                                       initialvalue=os.path.basename(path))
+
+        # 解析快捷方式，取真实路径
+        real_path = path
+        if path.lower().endswith(".lnk"):
+            try:
+                import winreg
+                shell = __import__("win32com.client", fromlist=["Dispatch"]).Dispatch("WScript.Shell")
+                shortcut = shell.CreateShortCut(path)
+                target = shortcut.Targetpath
+                if target and os.path.exists(target):
+                    real_path = target
+                    # 如果目标是文件，取其所在目录作为项目根目录
+                    if os.path.isfile(target):
+                        project_dir = os.path.dirname(target)
+                        use_dir = messagebox.askyesno(
+                            "纳入项目管理",
+                            f"检测到快捷方式指向：\n{target}\n\n"
+                            f"是否将整个项目目录纳入管理？\n{project_dir}\n\n"
+                            f"是 = 管理整个项目目录\n否 = 只管理此文件")
+                        if use_dir:
+                            real_path = project_dir
+            except Exception:
+                pass
+
+        default_name = os.path.basename(real_path)
+        name = simpledialog.askstring("工具名称", "请输入名称：", initialvalue=default_name)
         if not name:
             return
-        desc = simpledialog.askstring("工具描述", "简短描述（可留空）：") or ""
-        # 记录 GitHub 下载地址（可选）
+        desc = simpledialog.askstring("描述", "简短描述（可留空）：") or ""
         github_url = simpledialog.askstring(
             "下载地址（可选）",
-            "如果文件不存在时需要从网络下载，请填写直链地址\n（留空跳过）：") or ""
-        self.tools.append({"name": name, "path": path, "desc": desc, "url": github_url})
+            "文件不存在时的下载直链\n（留空跳过）：") or ""
+
+        self.tools.append({"name": name, "path": real_path, "desc": desc, "url": github_url})
         save_tools(self.tools)
         self.refresh_tools()
 
@@ -408,33 +432,229 @@ class App(tk.Tk):
     def _build_backup_page(self):
         frame = tk.Frame(self.content, bg=BG)
         self.pages["backup"] = frame
-        tk.Label(frame, text="💾  系统备份", bg=BG, fg=TEXT,
-                 font=("微软雅黑", 13, "bold")).pack(anchor="w", padx=16, pady=12)
 
-        info = (
-            "系统镜像备份使用 Windows 内置的 wbAdmin 工具\n\n"
-            "• 需要以管理员身份运行\n"
-            "• 备份整个 C 盘到指定磁盘\n"
-            "• 系统崩溃后可从镜像还原\n\n"
-            "建议将备份保存到移动硬盘"
-        )
-        tk.Label(frame, text=info, bg=BG2, fg=TEXT, font=("微软雅黑", 11),
-                 justify="left", padx=20, pady=20).pack(padx=16, pady=8, fill="x")
+        # 标题栏
+        bar = tk.Frame(frame, bg=BG, pady=10)
+        bar.pack(fill="x", padx=16)
+        tk.Label(bar, text="💾  系统备份", bg=BG, fg=TEXT,
+                 font=("微软雅黑", 13, "bold")).pack(side="left")
+        StyledButton(bar, "🔄 刷新", self._refresh_backups).pack(side="right", padx=4)
 
-        StyledButton(frame, "▶ 启动备份向导（需管理员）",
-                     self._start_backup, ACCENT).pack(pady=10)
+        # 备份类型选择
+        type_frame = tk.LabelFrame(frame, text="备份类型", bg=BG, fg=ACCENT,
+                                    font=("微软雅黑", 10), padx=12, pady=8)
+        type_frame.pack(fill="x", padx=16, pady=6)
+
+        self.backup_type = tk.StringVar(value="system")
+        types = [
+            ("完整系统备份（C盘 + D盘镜像）", "system"),
+            ("仅系统盘备份（C盘数据）",       "conly"),
+            ("所有 PDF 文件备份",             "pdf"),
+            ("所有 Word 文档备份",            "word"),
+        ]
+        for label, val in types:
+            tk.Radiobutton(type_frame, text=label, variable=self.backup_type,
+                           value=val, bg=BG, fg=TEXT, selectcolor=BG3,
+                           activebackground=BG, activeforeground=ACCENT,
+                           font=("微软雅黑", 10)).pack(anchor="w", pady=2)
+
+        # 操作按钮
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill="x", padx=16, pady=4)
+        StyledButton(btn_frame, "▶ 开始备份", self._start_backup, ACCENT).pack(side="left", padx=4)
+        StyledButton(btn_frame, "↩ 还原选中备份", self._restore_backup, "#89b4fa").pack(side="left", padx=4)
+        StyledButton(btn_frame, "✕ 删除选中备份", self._delete_backup, DANGER).pack(side="left", padx=4)
+
+        # 备份记录列表
+        tk.Label(frame, text="备份记录", bg=BG, fg=TEXT_DIM,
+                 font=("微软雅黑", 9)).pack(anchor="w", padx=16, pady=(8,2))
+
+        cols = ("备份名称", "类型", "备份时间", "大小", "路径")
+        style = ttk.Style()
+        style.configure("Bak.Treeview", background=BG2, foreground=TEXT,
+                        fieldbackground=BG2, rowheight=30, font=("微软雅黑", 10))
+        style.configure("Bak.Treeview.Heading", background=BG3, foreground=ACCENT,
+                        font=("微软雅黑", 10, "bold"))
+
+        tree_frame = tk.Frame(frame, bg=BG)
+        tree_frame.pack(fill="both", expand=True, padx=16, pady=4)
+        self.bak_tree = ttk.Treeview(tree_frame, columns=cols, show="headings",
+                                      style="Bak.Treeview")
+        widths = [180, 100, 150, 80, 280]
+        for col, w in zip(cols, widths):
+            self.bak_tree.heading(col, text=col)
+            self.bak_tree.column(col, width=w, minwidth=50)
+        sb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.bak_tree.yview)
+        self.bak_tree.configure(yscrollcommand=sb.set)
+        self.bak_tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        self.backup_records = []
+        self._refresh_backups()
+
+    def _get_backup_dir(self):
+        """读取或选择备份根目录"""
+        cfg = os.path.join(SCRIPT_DIR, "backup_dir.txt")
+        if os.path.exists(cfg):
+            with open(cfg) as f:
+                d = f.read().strip()
+            if os.path.isdir(d):
+                return d
+        d = filedialog.askdirectory(title="选择备份保存位置（建议选移动硬盘）")
+        if d:
+            with open(cfg, "w") as f:
+                f.write(d)
+        return d
+
+    def _refresh_backups(self):
+        self.bak_tree.delete(*self.bak_tree.get_children())
+        self.backup_records = []
+        cfg = os.path.join(SCRIPT_DIR, "backup_dir.txt")
+        if not os.path.exists(cfg):
+            return
+        with open(cfg) as f:
+            base = f.read().strip()
+        if not os.path.isdir(base):
+            return
+
+        type_labels = {
+            "system": "完整系统", "conly": "系统盘",
+            "pdf": "PDF文件", "word": "Word文档"
+        }
+        for name in sorted(os.listdir(base), reverse=True):
+            path = os.path.join(base, name)
+            if not os.path.isdir(path) and not os.path.isfile(path):
+                continue
+            # 只显示符合备份命名格式的条目: type_YYYYMMDD_HHMMSS
+            parts = name.split("_")
+            if len(parts) < 3:
+                continue
+            btype = parts[0]
+            if btype not in ("system", "conly", "pdf", "word"):
+                continue
+            label = type_labels.get(btype, btype)
+            try:
+                import datetime
+                ts = "_".join(name.split("_")[1:3])
+                dt = datetime.datetime.strptime(ts, "%Y%m%d_%H%M%S")
+                time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except:
+                time_str = "未知时间"
+            try:
+                if os.path.isdir(path):
+                    size = sum(os.path.getsize(os.path.join(r, f))
+                               for r, _, fs in os.walk(path) for f in fs)
+                else:
+                    size = os.path.getsize(path)
+                size_str = f"{size/1024/1024:.1f} MB"
+            except:
+                size_str = "-"
+            self.backup_records.append({"name": name, "path": path, "type": btype})
+            self.bak_tree.insert("", "end", values=(name, label, time_str, size_str, path))
 
     def _start_backup(self):
-        import ctypes
-        if not ctypes.windll.shell32.IsUserAnAdmin():
-            messagebox.showwarning("权限不足", "请以管理员身份运行本程序后再使用备份功能")
+        import ctypes, datetime, shutil, threading
+        btype = self.backup_type.get()
+        base  = self._get_backup_dir()
+        if not base:
             return
-        target = filedialog.askdirectory(title="选择备份目标磁盘/文件夹")
-        if not target:
+
+        ts   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        name = f"{btype}_{ts}"
+        dst  = os.path.join(base, name)
+
+        if btype in ("system", "conly"):
+            if not ctypes.windll.shell32.IsUserAnAdmin():
+                messagebox.showwarning("权限不足", "系统备份需要管理员权限\n请以管理员身份运行本程序")
+                return
+            drive = os.path.splitdrive(base)[0]
+            if btype == "system":
+                # 完整备份：C盘 + D盘
+                cmd = f'wbAdmin start backup -backupTarget:{drive} -include:C:,D: -allCritical -quiet'
+            else:
+                # 仅系统盘：C盘
+                cmd = f'wbAdmin start backup -backupTarget:{drive} -include:C: -allCritical -quiet'
+            subprocess.Popen(f'start cmd /k {cmd}', shell=True)
+            messagebox.showinfo("已启动", "系统备份已在新窗口启动，完成后请刷新列表")
+
+        elif btype in ("pdf", "word"):
+            ext = ".pdf" if btype == "pdf" else (".docx", ".doc")
+            search_dirs = [
+                os.path.expanduser("~\\Desktop"),
+                os.path.expanduser("~\\Documents"),
+                os.path.expanduser("~\\Downloads"),
+            ]
+            def do_backup():
+                os.makedirs(dst, exist_ok=True)
+                count = 0
+                for d in search_dirs:
+                    for root, _, files in os.walk(d):
+                        for f in files:
+                            if f.lower().endswith(ext):
+                                try:
+                                    shutil.copy2(os.path.join(root, f), dst)
+                                    count += 1
+                                except:
+                                    pass
+                self.after(0, lambda: [
+                    messagebox.showinfo("备份完成", f"共备份 {count} 个文件\n保存到: {dst}"),
+                    self._refresh_backups()
+                ])
+            threading.Thread(target=do_backup, daemon=True).start()
+            messagebox.showinfo("备份中", "正在搜索并备份文件，请稍候...")
+
+    def _restore_backup(self):
+        sel = self.bak_tree.selection()
+        if not sel:
+            messagebox.showwarning("提示", "请先选择一条备份记录")
             return
-        drive = os.path.splitdrive(target)[0]
-        cmd = f'wbAdmin start backup -backupTarget:{drive} -include:C: -allCritical -quiet'
-        subprocess.Popen(f'start cmd /k {cmd}', shell=True)
+        idx  = self.bak_tree.index(sel[0])
+        rec  = self.backup_records[idx]
+        btype = rec["type"]
+
+        if btype in ("system", "conly"):
+            messagebox.showinfo("系统还原说明",
+                "系统镜像还原步骤：\n\n"
+                "方法一（系统可启动）：\n"
+                "  控制面板 → 备份和还原 → 恢复系统设置\n\n"
+                "方法二（系统崩溃）：\n"
+                "  用Windows安装U盘启动 →\n"
+                "  修复计算机 → 系统映像恢复")
+        else:
+            dst = filedialog.askdirectory(title="选择还原目标文件夹")
+            if not dst:
+                return
+            import shutil, threading
+            def do_restore():
+                count = 0
+                for f in os.listdir(rec["path"]):
+                    try:
+                        shutil.copy2(os.path.join(rec["path"], f), dst)
+                        count += 1
+                    except:
+                        pass
+                self.after(0, lambda: messagebox.showinfo("还原完成", f"共还原 {count} 个文件到:\n{dst}"))
+            threading.Thread(target=do_restore, daemon=True).start()
+
+    def _delete_backup(self):
+        sel = self.bak_tree.selection()
+        if not sel:
+            messagebox.showwarning("提示", "请先选择一条备份记录")
+            return
+        idx = self.bak_tree.index(sel[0])
+        rec = self.backup_records[idx]
+        if not messagebox.askyesno("确认删除", f"确认删除备份：\n{rec['name']}\n\n此操作不可恢复"):
+            return
+        import shutil
+        try:
+            if os.path.isdir(rec["path"]):
+                shutil.rmtree(rec["path"])
+            else:
+                os.remove(rec["path"])
+            self._refresh_backups()
+            messagebox.showinfo("完成", "备份已删除")
+        except Exception as e:
+            messagebox.showerror("失败", str(e))
 
 
 if __name__ == "__main__":

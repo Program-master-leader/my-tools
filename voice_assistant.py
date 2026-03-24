@@ -345,6 +345,9 @@ def match_tool(text, tools):
         scored.sort(key=lambda x: x[0], reverse=True)
         if len(scored)==1 or scored[0][0] >= scored[1][0]+1.5:
             return scored[0][1]
+    # 有「打开/启动」关键词时不走 Ollama，直接返回 None 让 _find_and_launch_app 处理
+    if any(w in text for w in ["打开","启动","运行","开启"]):
+        return None
     tool_list_str = "\n".join(f"- {t['name']}：{t.get('desc','')}" for t in tools)
     prompt = (f"用户说：「{text}」\n\n可用工具列表：\n{tool_list_str}\n\n"
               f"请判断用户是否想启动某个工具。如果是，只回复工具名称；如果不是，只回复「无」。不要解释。")
@@ -396,34 +399,49 @@ def _find_and_launch_app(app_name, log_fn):
         if key in name_lower or any(a in name_lower for a in aliases):
             search_terms.extend(aliases)
 
-    # 搜索路径：开始菜单 .lnk + 常见安装目录 .exe
-    search_dirs = [
-        os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu"),
-        os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu"),
-        r"C:\Program Files",
-        r"C:\Program Files (x86)",
-        os.path.expandvars(r"%LOCALAPPDATA%\Programs"),
-        os.path.expandvars(r"%LOCALAPPDATA%"),
-    ]
+    def _score(fname):
+        s = 0
+        for term in search_terms:
+            if term == fname:       s = max(s, 10)
+            elif term in fname:     s = max(s, 6)
+            elif fname in term:     s = max(s, 5)
+        return s
 
     candidates = []  # (score, path)
 
-    for d in search_dirs:
-        if not os.path.exists(d):
+    # 第一优先：开始菜单（递归，速度快）
+    for menu_dir in [
+        os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu"),
+        os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu"),
+    ]:
+        if not os.path.exists(menu_dir):
             continue
-        for ext in ("*.lnk", "*.exe"):
-            for fpath in glob.glob(os.path.join(d, "**", ext), recursive=True):
+        for fpath in glob.glob(os.path.join(menu_dir, "**", "*.lnk"), recursive=True):
+            fname = os.path.splitext(os.path.basename(fpath))[0].lower()
+            s = _score(fname)
+            if s > 0:
+                candidates.append((s, fpath))
+
+    # 开始菜单找到了就直接用，不再扫 Program Files（避免慢）
+    if not candidates:
+        for prog_dir in [
+            r"C:\Program Files",
+            r"C:\Program Files (x86)",
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs"),
+        ]:
+            if not os.path.exists(prog_dir):
+                continue
+            # 只搜两层深度，避免太慢
+            for fpath in glob.glob(os.path.join(prog_dir, "*", "*.exe")):
                 fname = os.path.splitext(os.path.basename(fpath))[0].lower()
-                score = 0
-                for term in search_terms:
-                    if term == fname:
-                        score = max(score, 10)
-                    elif term in fname or fname in term:
-                        score = max(score, 5)
-                    elif any(c in fname for c in term if len(c) > 0):
-                        score = max(score, 1)
-                if score > 0:
-                    candidates.append((score, fpath))
+                s = _score(fname)
+                if s > 0:
+                    candidates.append((s, fpath))
+            for fpath in glob.glob(os.path.join(prog_dir, "*", "*", "*.exe")):
+                fname = os.path.splitext(os.path.basename(fpath))[0].lower()
+                s = _score(fname)
+                if s > 0:
+                    candidates.append((s, fpath))
 
     if not candidates:
         return None
@@ -433,7 +451,7 @@ def _find_and_launch_app(app_name, log_fn):
     display = os.path.splitext(os.path.basename(best_path))[0]
     log_fn(f"找到软件：{display}")
     try:
-        subprocess.Popen(f'start "" "{best_path}"', shell=True)
+        os.startfile(best_path)  # 最可靠的方式，支持 .lnk/.exe
         return f"好的，正在打开「{display}」"
     except Exception as e:
         return f"启动失败：{e}"

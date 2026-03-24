@@ -267,18 +267,46 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                 messagebox.showinfo("已存在", f"「{t['name']}」已在列表中")
                 return
 
-        default_name = os.path.basename(real_path)
+        default_name = os.path.basename(real_path.rstrip("\\/"))
         name = simpledialog.askstring("工具名称", f"路径：{real_path}\n\n请输入名称：",
                                        initialvalue=default_name)
         if not name:
             return
         desc = simpledialog.askstring("描述（可留空）", "简短描述这个工具的用途：") or ""
 
-        self.tools.append({"name": name, "path": real_path, "desc": desc, "url": "", "url_backup": ""})
+        # 计算大小，判断是否超出 Git 限制（50MB）
+        pan_url = ""
+        size_mb = self._get_path_size_mb(real_path)
+        GIT_LIMIT_MB = 50
+
+        if size_mb > GIT_LIMIT_MB:
+            ans = messagebox.askyesno(
+                "文件较大，建议网盘备份",
+                f"「{name}」大小约 {size_mb:.0f} MB，超出 Git 托管限制（{GIT_LIMIT_MB} MB）。\n\n"
+                f"建议手动上传到百度网盘后填写分享链接，\n"
+                f"换电脑时可一键跳转下载。\n\n"
+                f"是 → 现在填写百度网盘链接\n"
+                f"否 → 跳过（只记录本地路径）")
+            if ans:
+                pan_url = simpledialog.askstring(
+                    "百度网盘链接",
+                    f"请将「{name}」上传到百度网盘后，\n粘贴分享链接（含提取码）：") or ""
+
+        entry = {"name": name, "path": real_path, "desc": desc,
+                 "url": "", "url_backup": ""}
+        if pan_url:
+            entry["pan_url"] = pan_url
+
+        self.tools.append(entry)
         save_tools(self.tools)
         self.refresh_tools()
-        # 同步到 Git 仓库
-        self._git_sync(real_path, name)
+
+        # 小文件才同步到 Git
+        if size_mb <= GIT_LIMIT_MB:
+            self._git_sync(real_path, name)
+        else:
+            self._sync_toast(f"「{name}」较大，已跳过 Git 同步" +
+                             ("，网盘链接已保存" if pan_url else ""))
 
     def _git_sync(self, src_path, tool_name):
         """把新增工具同步到 Git 仓库（优先 Gitee，失败只推 Gitee 也算成功）"""
@@ -367,12 +395,21 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             abs_path = resolve_path(t["path"])
             ext    = os.path.splitext(t["path"])[1].upper() or "文件夹"
             exists = os.path.exists(abs_path)
-            has_url = t.get("url") or t.get("url_backup")
-            status = "✓ 正常" if exists else "⬇ 可下载" if has_url else "✗ 丢失"
-            tag    = "ok" if exists else "missing"
+            has_git = t.get("url") or t.get("url_backup")
+            has_pan = t.get("pan_url")
+            if exists:
+                status = "✓ 正常"
+            elif has_pan:
+                status = "📦 网盘"
+            elif has_git:
+                status = "⬇ 可下载"
+            else:
+                status = "✗ 丢失"
+            tag = "ok" if exists else "pan" if has_pan else "missing"
             self.tree.insert("", "end", values=(
                 t["name"], ext, t.get("desc", ""), t["path"], status), tags=(tag,))
         self.tree.tag_configure("ok",      foreground=TEXT)
+        self.tree.tag_configure("pan",     foreground="#f9e2af")
         self.tree.tag_configure("missing", foreground=DANGER)
 
     def _selected_idx(self):
@@ -433,7 +470,14 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         idx = self._selected_idx()
         if idx is None:
             return
-        launch_tool(self.tools[idx])
+        t = self.tools[idx]
+        abs_path = resolve_path(t["path"])
+        # 文件不存在但有网盘链接，直接打开网盘
+        if not os.path.exists(abs_path) and t.get("pan_url"):
+            import webbrowser
+            webbrowser.open(t["pan_url"])
+            return
+        launch_tool(t)
 
     def edit_tool(self):
         idx = self._selected_idx()
@@ -762,6 +806,25 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             return f"{size/1024**2:.1f} MB"
         except Exception:
             return "-"
+
+    def _get_path_size_mb(self, path):
+        """返回文件或目录的大小（MB），快速估算，目录超过限制时提前返回"""
+        LIMIT = 50 * 1024 * 1024  # 50MB，超过就不继续算了
+        try:
+            if os.path.isfile(path):
+                return os.path.getsize(path) / 1024 / 1024
+            total = 0
+            for r, _, files in os.walk(path):
+                for f in files:
+                    try:
+                        total += os.path.getsize(os.path.join(r, f))
+                    except Exception:
+                        pass
+                    if total > LIMIT * 20:  # 超过1GB直接返回
+                        return total / 1024 / 1024
+            return total / 1024 / 1024
+        except Exception:
+            return 0
 
     def _start_backup(self):
         import ctypes, datetime, shutil, threading

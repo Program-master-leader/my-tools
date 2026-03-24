@@ -812,7 +812,7 @@ class VoiceAssistant(tk.Tk):
             threading.Thread(target=self._wake_loop, daemon=True).start()
 
     def _wake_loop(self):
-        """持续监听唤醒词，VAD自动检测说话结束"""
+        """持续监听唤醒词，VAD自动检测说话结束，高灵敏度版"""
         import whisper, numpy as np
         import sounddevice as sd
 
@@ -822,85 +822,98 @@ class VoiceAssistant(tk.Tk):
 
         device_info = sd.query_devices(kind="input")
         native_rate = int(device_info["default_samplerate"])
-        chunk = int(native_rate * 0.1)  # 100ms
+        chunk = int(native_rate * 0.08)  # 80ms 一块，响应更快
 
-        while self.wake_mode:
-            try:
-                # 校准底噪
-                calib = sd.rec(int(0.3 * native_rate), samplerate=native_rate,
-                               channels=1, dtype="int16")
-                sd.wait()
-                noise = np.abs(calib.flatten()).mean()
-                threshold = max(noise * 3, 3)
+        # 启动时校准一次底噪，之后持续监听不再重新校准
+        calib = sd.rec(int(0.4 * native_rate), samplerate=native_rate,
+                       channels=1, dtype="int16")
+        sd.wait()
+        noise = np.abs(calib.flatten()).mean()
+        # 阈值 = 底噪 * 1.8，最低值 = 2（极低灵敏度麦克风也能触发）
+        threshold = max(noise * 1.8, 2)
 
-                # VAD：等待说话开始，说完自动停
-                frames = []
-                silent_chunks = 0
-                speaking = False
-                max_wait = int(5 * 10)   # 最多等5秒没人说话
-                wait_count = 0
+        frames = []
+        silent_chunks = 0
+        speaking = False
 
-                with sd.InputStream(samplerate=native_rate, channels=1,
-                                    dtype="int16") as stream:
-                    while self.wake_mode:
-                        data, _ = stream.read(chunk)
-                        data = data.flatten()
-                        energy = np.abs(data).mean()
+        with sd.InputStream(samplerate=native_rate, channels=1,
+                            dtype="int16") as stream:
+            while self.wake_mode:
+                try:
+                    data, _ = stream.read(chunk)
+                    data = data.flatten()
+                    energy = np.abs(data).mean()
 
-                        if energy > threshold:
-                            speaking = True
+                    if energy > threshold:
+                        speaking = True
+                        silent_chunks = 0
+                        frames.append(data)
+                    elif speaking:
+                        frames.append(data)
+                        silent_chunks += 1
+                        if silent_chunks >= 10:  # 静音0.8秒，说完了
+                            # ── 处理这段音频 ──
+                            audio_np = np.concatenate(frames)
+                            frames = []
                             silent_chunks = 0
-                            frames.append(data)
-                            wait_count = 0
-                        elif speaking:
-                            frames.append(data)
-                            silent_chunks += 1
-                            if silent_chunks >= 12:  # 静音1.2秒，说完了
+                            speaking = False
+
+                            if not self.wake_mode:
                                 break
-                        else:
-                            wait_count += 1
-                            if wait_count > max_wait:
-                                break  # 5秒没人说话，重新校准
 
-                if not frames or not self.wake_mode:
-                    continue
+                            # 重采样到16000
+                            from scipy.signal import resample as sp_resample
+                            target_len = int(len(audio_np) * 16000 / native_rate)
+                            audio_np = sp_resample(audio_np, max(target_len, 1)).astype(np.int16)
+                            audio_np = _amplify(audio_np, target_peak=20000)
 
-                # 重采样 + 放大
-                audio_np = np.concatenate(frames)
-                from scipy.signal import resample as sp_resample
-                target_len = int(len(audio_np) * 16000 / native_rate)
-                audio_np = sp_resample(audio_np, max(target_len, 1)).astype(np.int16)
-                audio_np = _amplify(audio_np)
+                            arr = audio_np.flatten().astype(np.float32) / 32768.0
+                            # 峰值太低说明是噪音，跳过
+                            if len(arr) < 800 or np.abs(arr).max() < 0.03:
+                                continue
 
-                arr = audio_np.flatten().astype(np.float32) / 32768.0
-                if len(arr) < 1600 or np.abs(arr).max() < 0.05:
-                    continue
+                            try:
+                                result = model.transcribe(
+                                    arr, language="zh", fp16=False,
+                                    no_speech_threshold=0.3,   # 更宽松，短词也能识别
+                                    logprob_threshold=-2.0,    # 更宽松
+                                    condition_on_previous_text=False,
+                                    temperature=0,             # 确定性输出
+                                )
+                                text = result["text"].strip()
+                            except Exception:
+                                continue
 
-                result = model.transcribe(arr, language="zh", fp16=False,
-                                          no_speech_threshold=0.6,
-                                          condition_on_previous_text=False)
-                text = result["text"].strip()
-                if not text:
-                    continue
+                            if not text:
+                                continue
 
-                for w, r in [("小可","小K"),("小客","小K"),("小卡","小K"),("小黑","小K")]:
-                    text = text.replace(w, r)
+                            # 唤醒词纠错（Whisper常见误识别）
+                            for w, r in [
+                                ("小可","小K"), ("小客","小K"), ("小卡","小K"),
+                                ("小黑","小K"), ("小凯","小K"), ("小开","小K"),
+                                ("小克","小K"), ("晓K","小K"), ("晓k","小K"),
+                                ("肖K","小K"), ("肖k","小K"), ("小key","小K"),
+                                ("小壳","小K"), ("小科","小K"), ("小棵","小K"),
+                            ]:
+                                text = text.replace(w, r)
 
-                if not _is_wake_word(text):
-                    continue
+                            if not _is_wake_word(text):
+                                continue
 
-                # 检测到唤醒词，中断当前任务
-                self._task_stop.set()
+                            # 检测到唤醒词，中断当前任务
+                            self._task_stop.set()
+                            cmd = _extract_command_after_wake(text)
+                            if cmd:
+                                self.after(0, lambda c=cmd: self._on_wake_with_cmd(c))
+                            else:
+                                self.after(0, self._on_wake)
+                    else:
+                        # 没在说话，重置帧缓冲（防止积累噪音）
+                        if len(frames) > 0:
+                            frames = []
 
-                # 判断同一句话里是否包含指令（如「小K PDF转Word」）
-                cmd = _extract_command_after_wake(text)
-                if cmd:
-                    self.after(0, lambda c=cmd: self._on_wake_with_cmd(c))
-                else:
-                    self.after(0, self._on_wake)
-
-            except Exception:
-                pass
+                except Exception:
+                    pass
 
     def _trigger_winh_input(self):
         """

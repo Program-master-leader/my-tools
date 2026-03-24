@@ -32,31 +32,50 @@ TEXT_DIM= "#6c7086"
 
 
 # ══════════════════════════════════════════════════════
-# 语音识别
+# 语音识别（用 sounddevice 替代 PyAudio）
 # ══════════════════════════════════════════════════════
+def record_audio(duration=6, samplerate=16000):
+    """用 sounddevice 录音，返回 AudioData 对象供 SpeechRecognition 使用"""
+    import sounddevice as sd
+    import numpy as np
+    import speech_recognition as sr
+
+    audio_np = sd.rec(int(duration * samplerate), samplerate=samplerate,
+                      channels=1, dtype="int16")
+    sd.wait()
+    audio_bytes = audio_np.tobytes()
+    audio_data = sr.AudioData(audio_bytes, samplerate, 2)
+    return audio_data
+
+
 def record_and_recognize(timeout=5, phrase_limit=10):
     """录音并识别，返回文字（中文）"""
     import speech_recognition as sr
     r = sr.Recognizer()
-    r.energy_threshold = 300
-    r.dynamic_energy_threshold = True
-    with sr.Microphone() as source:
-        r.adjust_for_ambient_noise(source, duration=0.3)
-        audio = r.listen(source, timeout=timeout, phrase_time_limit=phrase_limit)
-    # 优先用 Google（需联网），失败用本地 Whisper（如已安装）
+    audio = record_audio(duration=phrase_limit)
     try:
         text = r.recognize_google(audio, language="zh-CN")
         return text
-    except Exception:
-        pass
-    return ""
+    except sr.UnknownValueError:
+        return ""
+    except Exception as e:
+        raise e
 
 
 # ══════════════════════════════════════════════════════
 # AI 生成（Ollama qwen2.5:7b）
 # ══════════════════════════════════════════════════════
 def ask_ollama(prompt, stream_callback=None):
-    """调用本地 Ollama，支持流式输出"""
+    """调用本地 Ollama，支持流式输出，自动启动服务"""
+    import time
+    # 确保 Ollama 服务在运行
+    for ollama_path in [r"D:\Ollama\ollama.exe", r"C:\Users\Public\ollama\ollama.exe"]:
+        if os.path.exists(ollama_path):
+            subprocess.Popen([ollama_path, "serve"],
+                             creationflags=0x08000000,  # 不弹窗
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(1)
+            break
     try:
         import ollama
         result = ""
@@ -95,10 +114,10 @@ def parse_save_path(text):
 def parse_filename(text):
     """从指令中提取文件名"""
     patterns = [
-        r"命名为[「「"]?([^」」"，。\s]+)[」」"]?",
-        r"文件名[为是][「「"]?([^」」"，。\s]+)[」」"]?",
-        r"叫做?[「「"]?([^」」"，。\s]+)[」」"]?",
-        r"取名[为叫][「「"]?([^」」"，。\s]+)[」」"]?",
+        r'命名为["\u300c\u300e]?([^\u300d\u300f"\uff0c\u3002\s]+)["\u300d\u300f]?',
+        r'文件名[为是]["\u300c\u300e]?([^\u300d\u300f"\uff0c\u3002\s]+)["\u300d\u300f]?',
+        r'叫做?["\u300c\u300e]?([^\u300d\u300f"\uff0c\u3002\s]+)["\u300d\u300f]?',
+        r'取名[为叫]["\u300c\u300e]?([^\u300d\u300f"\uff0c\u3002\s]+)["\u300d\u300f]?',
     ]
     for p in patterns:
         m = re.search(p, text)
@@ -384,9 +403,10 @@ class VoiceAssistant(tk.Tk):
             else:
                 self.after(0, lambda: self._append("system", "未识别到语音，请重试"))
         except Exception as e:
+            err_msg = str(e)
             self.after(0, lambda: self.mic_btn.config(bg="#45475a", text="🎙 按住说话"))
             self.after(0, lambda: self._set_status("● 待机"))
-            self.after(0, lambda: self._append("error", f"录音失败：{e}"))
+            self.after(0, lambda msg=err_msg: self._append("error", f"录音失败：{msg}"))
 
     # ── 唤醒监听 ──
     def _toggle_wake(self):
@@ -405,14 +425,11 @@ class VoiceAssistant(tk.Tk):
     def _wake_loop(self):
         """持续监听唤醒词"""
         import speech_recognition as sr
+        import sounddevice as sd
         r = sr.Recognizer()
-        r.energy_threshold = 300
-        r.dynamic_energy_threshold = True
         while self.wake_mode:
             try:
-                with sr.Microphone() as source:
-                    r.adjust_for_ambient_noise(source, duration=0.2)
-                    audio = r.listen(source, timeout=3, phrase_time_limit=4)
+                audio = record_audio(duration=3)
                 text = r.recognize_google(audio, language="zh-CN")
                 text_lower = text.lower().replace(" ", "")
                 if any(w.lower() in text_lower for w in WAKE_WORDS):
@@ -435,7 +452,8 @@ class VoiceAssistant(tk.Tk):
                 self.after(0, lambda: self._append("system", "未听清，请再说一次"))
                 self.after(0, lambda: self._set_status("● 监听唤醒词", ACCENT2))
         except Exception as e:
-            self.after(0, lambda: self._append("error", f"识别失败：{e}"))
+            err_msg = str(e)
+            self.after(0, lambda msg=err_msg: self._append("error", f"识别失败：{msg}"))
             self.after(0, lambda: self._set_status("● 监听唤醒词", ACCENT2))
 
     # ── 文字输入 ──

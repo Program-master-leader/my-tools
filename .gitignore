@@ -44,3 +44,9 @@ $RECYCLE.BIN/
 dist/
 build/
 *.egg-info/
+
+# 大型软件目录（超出Git限制，改用百度网盘备份）
+Docker/
+*.exe
+*.dll
+*.msi

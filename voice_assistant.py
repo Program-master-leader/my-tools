@@ -219,6 +219,26 @@ def save_as_pdf(content, path):
     pdf.output(path)
 
 
+def launch_tool(tool):
+    """启动工具"""
+    path = tool["path"]
+    if not os.path.isabs(path):
+        path = os.path.join(SCRIPT_DIR, path)
+    ext = os.path.splitext(path)[1].lower()
+    if not os.path.exists(path):
+        return
+    if ext == ".py":
+        subprocess.Popen(f'start cmd /k python "{path}"', shell=True)
+    elif ext == ".exe":
+        subprocess.Popen(f'"{path}"', shell=True)
+    elif ext in (".bat", ".cmd"):
+        subprocess.Popen(f'start cmd /k "{path}"', shell=True)
+    elif ext == ".jar":
+        subprocess.Popen(f'start cmd /k java -jar "{path}"', shell=True)
+    else:
+        subprocess.Popen(f'start "" "{path}"', shell=True)
+
+
 def load_tools_list():
     """读取 tools.json"""
     p = os.path.join(SCRIPT_DIR, "tools.json")

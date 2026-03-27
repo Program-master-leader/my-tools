@@ -20,10 +20,17 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if getattr(sys, "frozen", False):
     SCRIPT_DIR = os.path.dirname(sys.executable)
 
-# tools.json 路径：优先读 exe 同目录（用户自定义），没有则读打包内置的
-TOOLS_JSON = os.path.join(SCRIPT_DIR, "tools.json")
+# 用户数据目录（AppData\Roaming\KHY小工具），不污染 exe 所在位置
+_USER_DATA = os.path.join(os.environ.get("APPDATA", SCRIPT_DIR), "KHY小工具")
+os.makedirs(_USER_DATA, exist_ok=True)
+
+# tools.json：优先用户数据目录，没有则用内置
+TOOLS_JSON = os.path.join(_USER_DATA, "tools.json")
 _BUILTIN_TOOLS_JSON = os.path.join(
     getattr(sys, "_MEIPASS", SCRIPT_DIR), "tools.json")
+
+# git_config.json 也存用户数据目录
+GIT_CONFIG_JSON = os.path.join(_USER_DATA, "git_config.json")
 
 def load_tools():
     # 优先用户目录（有用户自定义工具），否则用内置
@@ -852,14 +859,13 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
 
     def _save_git_cfg(self):
         cfg = {k: v.get().strip() for k, v in self._git_cfg.items()}
-        with open(os.path.join(SCRIPT_DIR, "git_config.json"), "w", encoding="utf-8") as f:
+        with open(GIT_CONFIG_JSON, "w", encoding="utf-8") as f:
             json.dump(cfg, f, ensure_ascii=False, indent=2)
         self._git_log_append("✓ 配置已保存")
 
     def _load_git_cfg(self):
-        p = os.path.join(SCRIPT_DIR, "git_config.json")
-        if os.path.exists(p):
-            with open(p, encoding="utf-8") as f:
+        if os.path.exists(GIT_CONFIG_JSON):
+            with open(GIT_CONFIG_JSON, encoding="utf-8") as f:
                 cfg = json.load(f)
             for k, v in self._git_cfg.items():
                 v.set(cfg.get(k, ""))

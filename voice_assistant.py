@@ -290,10 +290,15 @@ def _whisper_recognize(audio):
     return text
 
 # ══════════════════════════════════════════════════════
-# AI（Ollama）
 # ══════════════════════════════════════════════════════
-def ask_ollama(prompt, stream_callback=None):
+# AI（Ollama）+ 对话历史记忆
+# ══════════════════════════════════════════════════════
+_chat_history = []   # 全局对话历史，最多保留20轮
+_MAX_HISTORY = 20
+
+def ask_ollama(prompt, stream_callback=None, use_history=True):
     import time
+    global _chat_history
     for p in [r"D:\Ollama\ollama.exe", r"C:\Users\Public\ollama\ollama.exe"]:
         if os.path.exists(p):
             subprocess.Popen([p, "serve"], creationflags=0x08000000,
@@ -301,12 +306,22 @@ def ask_ollama(prompt, stream_callback=None):
             time.sleep(1); break
     try:
         import ollama
+        messages = [{"role":"system","content":"你是小K语音助手，简洁回答，不超过100字。"}]
+        if use_history:
+            messages += _chat_history[-_MAX_HISTORY*2:]
+        messages.append({"role":"user","content":prompt})
+
         result = ""
-        for chunk in ollama.chat(model="qwen2.5:7b",
-                                  messages=[{"role":"user","content":prompt}], stream=True):
+        for chunk in ollama.chat(model="qwen2.5:7b", messages=messages, stream=True):
             piece = chunk["message"]["content"]
             result += piece
             if stream_callback: stream_callback(piece)
+
+        if use_history and result and not result.startswith("[AI错误"):
+            _chat_history.append({"role":"user","content":prompt})
+            _chat_history.append({"role":"assistant","content":result})
+            if len(_chat_history) > _MAX_HISTORY * 2:
+                _chat_history = _chat_history[-_MAX_HISTORY*2:]
         return result
     except Exception as e:
         return f"[AI错误: {e}]"
@@ -873,19 +888,16 @@ class VoiceAssistant(tk.Tk):
             threading.Thread(target=self._wake_loop, daemon=True).start()
 
     def _wake_loop(self):
-        """
-        唤醒词监听：用 Windows System.Speech 关键词语法识别，
-        只识别「小K」相关词汇，准确率极高，不会误触发。
-        """
+        """唤醒词监听：关键词语法 + UTF-8输出，置信度0.1，只识别「小K」系列"""
         import subprocess, os
 
-        # 只识别唤醒词的关键词语法，不用听写语法
         wake_words_ps = '","'.join([
             "小K","小k","小可","小客","小卡","小凯","小开","小克",
-            "晓K","晓k","肖K","肖k","小key","小壳","小科",
+            "晓K","晓k","肖K","肖k","小科","小壳",
             "小K小K","小k小k","小K小k","小k小K",
         ])
         ps_script = f"""
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Add-Type -AssemblyName System.Speech
 $info = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers() | Where-Object {{ $_.Culture.Name -eq 'zh-CN' }} | Select-Object -First 1
 if ($info -ne $null) {{
@@ -894,19 +906,16 @@ if ($info -ne $null) {{
     $engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine
 }}
 $engine.SetInputToDefaultAudioDevice()
-
-# 关键词列表
 $words = @("{wake_words_ps}")
 $choices = New-Object System.Speech.Recognition.Choices($words)
 $gb = New-Object System.Speech.Recognition.GrammarBuilder($choices)
 $grammar = New-Object System.Speech.Recognition.Grammar($gb)
 $engine.LoadGrammar($grammar)
-
 $timeout = [System.TimeSpan]::FromSeconds(5)
 while ($true) {{
     $result = $engine.Recognize($timeout)
-    if ($result -ne $null -and $result.Text -ne "" -and $result.Confidence -gt 0.3) {{
-        Write-Output $result.Text
+    if ($result -ne $null -and $result.Text -ne "" -and $result.Confidence -gt 0.1) {{
+        [Console]::WriteLine($result.Text)
         [Console]::Out.Flush()
     }}
 }}
@@ -916,7 +925,8 @@ while ($true) {{
             f.write(ps_script)
 
         proc = subprocess.Popen(
-            ["powershell", "-ExecutionPolicy", "Bypass", "-File", tmp_ps],
+            ["powershell", "-ExecutionPolicy", "Bypass",
+             "-OutputFormat", "Text", "-File", tmp_ps],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             creationflags=0x08000000
         )
@@ -927,12 +937,13 @@ while ($true) {{
                 line = proc.stdout.readline()
                 if not line:
                     continue
-                for enc in ("gbk", "utf-8", "utf-16"):
+                try:
+                    text = line.decode("utf-8").strip()
+                except Exception:
                     try:
-                        text = line.decode(enc).strip()
-                        break
+                        text = line.decode("gbk").strip()
                     except Exception:
-                        text = ""
+                        continue
                 if not text:
                     continue
 

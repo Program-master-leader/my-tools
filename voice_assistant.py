@@ -268,7 +268,7 @@ def _whisper_recognize(audio):
         return ""
     if not hasattr(record_and_recognize, "_model"):
         import whisper
-        record_and_recognize._model = whisper.load_model("base")
+        record_and_recognize._model = whisper.load_model("tiny")
     result = record_and_recognize._model.transcribe(
         arr, language="zh", fp16=False,
         condition_on_previous_text=False,  # 避免幻觉
@@ -895,8 +895,11 @@ class VoiceAssistant(tk.Tk):
         if not hasattr(self, "_whisper_model"):
             import whisper
             self.after(0, lambda: self._append("system", "⏳ 加载语音模型..."))
-            self._whisper_model = whisper.load_model("base")
+            self._whisper_model = whisper.load_model("tiny")  # tiny比base快3倍
+            record_and_recognize._model = self._whisper_model  # 共享同一实例
             self.after(0, lambda: self._append("system", "✓ 模型就绪，说「小K」唤醒"))
+        elif hasattr(record_and_recognize, "_model"):
+            self._whisper_model = record_and_recognize._model  # 复用已加载的模型
         model = self._whisper_model
 
         device_info = sd.query_devices(kind="input")
@@ -927,7 +930,7 @@ class VoiceAssistant(tk.Tk):
                     elif speaking:
                         frames.append(data)
                         silent_chunks += 1
-                        if silent_chunks >= 8:
+                        if silent_chunks >= 5:  # 0.5秒静音即触发
                             audio_np = np.concatenate(frames)
                             frames = []; silent_chunks = 0; speaking = False
                             if not self.wake_mode:

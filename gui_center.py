@@ -113,6 +113,7 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         self.pages = {}
         nav_items = [
             ("🛠  工具管理", "tools"),
+            ("🐙  Git 管理", "git"),
             ("🗂  文件清理", "clean"),
             ("🔧  环境变量", "env"),
             ("💾  系统备份", "backup"),
@@ -132,6 +133,7 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         self.content.pack(side="left", fill="both", expand=True)
 
         self._build_tools_page()
+        self._build_git_page()
         self._build_clean_page()
         self._build_env_page()
         self._build_backup_page()
@@ -196,6 +198,13 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                 self._canvas_window, width=e.width))
         self._canvas.bind_all("<MouseWheel>",
             lambda e: self._canvas.yview_scroll(-1*(e.delta//120), "units"))
+
+        # 注册拖拽到 canvas 和 list_frame（修复拖拽失效）
+        if _DND_OK:
+            self._canvas.drop_target_register(DND_FILES)
+            self._canvas.dnd_bind("<<Drop>>", self._on_drop)
+            self._list_frame.drop_target_register(DND_FILES)
+            self._list_frame.dnd_bind("<<Drop>>", self._on_drop)
 
         # 列头
         hdr = tk.Frame(self._list_frame, bg=BG3)
@@ -602,6 +611,265 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             self.tools.pop(idx)
             save_tools(self.tools)
             self.refresh_tools()
+
+    # ── Git 管理页 ────────────────────────────────────
+
+    def _build_git_page(self):
+        frame = tk.Frame(self.content, bg=BG)
+        self.pages["git"] = frame
+
+        tk.Label(frame, text="🐙  Git 管理", bg=BG, fg=TEXT,
+                 font=("微软雅黑", 13, "bold")).pack(anchor="w", padx=16, pady=(12,4))
+
+        # Token 配置区
+        cfg_frame = tk.LabelFrame(frame, text="账号 / Token 配置",
+                                   bg=BG, fg=ACCENT, font=("微软雅黑",10), padx=12, pady=8)
+        cfg_frame.pack(fill="x", padx=16, pady=4)
+
+        self._git_cfg = {}
+        for label, key, show in [
+            ("GitHub Token", "github_token", "*"),
+            ("Gitee  Token", "gitee_token",  "*"),
+            ("GitLab Token", "gitlab_token", "*"),
+            ("GitLab 地址",  "gitlab_url",   ""),
+        ]:
+            row = tk.Frame(cfg_frame, bg=BG); row.pack(fill="x", pady=2)
+            tk.Label(row, text=label, bg=BG, fg=TEXT,
+                     font=("微软雅黑",9), width=14, anchor="w").pack(side="left")
+            v = tk.StringVar()
+            self._git_cfg[key] = v
+            tk.Entry(row, textvariable=v, bg=BG2, fg=TEXT, insertbackground=TEXT,
+                     relief="flat", font=("微软雅黑",9), show=show, width=40).pack(side="left", padx=6)
+
+        btn_row = tk.Frame(cfg_frame, bg=BG); btn_row.pack(anchor="w", pady=4)
+        StyledButton(btn_row, "💾 保存配置", self._save_git_cfg, ACCENT).pack(side="left", padx=4)
+        StyledButton(btn_row, "📋 加载配置", self._load_git_cfg).pack(side="left", padx=4)
+        self._load_git_cfg()
+
+        # 操作区
+        op_frame = tk.Frame(frame, bg=BG); op_frame.pack(fill="x", padx=16, pady=4)
+
+        # 下载项目
+        dl_frame = tk.LabelFrame(op_frame, text="⬇ 克隆/下载项目",
+                                  bg=BG, fg=ACCENT, font=("微软雅黑",10), padx=12, pady=8)
+        dl_frame.pack(side="left", fill="both", expand=True, padx=(0,8))
+
+        tk.Label(dl_frame, text="仓库地址（支持 GitHub/Gitee/GitLab）：",
+                 bg=BG, fg=TEXT_DIM, font=("微软雅黑",9)).pack(anchor="w")
+        self._clone_url = tk.StringVar()
+        tk.Entry(dl_frame, textvariable=self._clone_url, bg=BG2, fg=TEXT,
+                 insertbackground=TEXT, relief="flat",
+                 font=("微软雅黑",9), width=40).pack(fill="x", pady=4)
+        tk.Label(dl_frame, text="保存到：", bg=BG, fg=TEXT_DIM,
+                 font=("微软雅黑",9)).pack(anchor="w")
+        path_row = tk.Frame(dl_frame, bg=BG); path_row.pack(fill="x", pady=2)
+        self._clone_dest = tk.StringVar(value=SCRIPT_DIR)
+        tk.Entry(path_row, textvariable=self._clone_dest, bg=BG2, fg=TEXT,
+                 insertbackground=TEXT, relief="flat",
+                 font=("微软雅黑",9), width=30).pack(side="left", fill="x", expand=True)
+        StyledButton(path_row, "📁", lambda: self._clone_dest.set(
+            filedialog.askdirectory() or self._clone_dest.get())).pack(side="left", padx=4)
+        StyledButton(dl_frame, "⬇ 克隆", self._do_clone, "#89b4fa").pack(anchor="w", pady=4)
+
+        # 上传项目
+        up_frame = tk.LabelFrame(op_frame, text="⬆ 上传/推送项目",
+                                  bg=BG, fg=ACCENT, font=("微软雅黑",10), padx=12, pady=8)
+        up_frame.pack(side="left", fill="both", expand=True)
+
+        tk.Label(up_frame, text="拖拽文件夹/快捷方式到此处，或选择目录：",
+                 bg=BG, fg=TEXT_DIM, font=("微软雅黑",9)).pack(anchor="w")
+
+        self._upload_drop = tk.Label(up_frame,
+            text="📂  拖拽项目文件夹到这里", bg=BG3, fg=TEXT_DIM,
+            font=("微软雅黑",10), pady=20, relief="flat", cursor="hand2")
+        self._upload_drop.pack(fill="x", pady=4)
+        if _DND_OK:
+            self._upload_drop.drop_target_register(DND_FILES)
+            self._upload_drop.dnd_bind("<<Drop>>", self._on_upload_drop)
+
+        StyledButton(up_frame, "📁 选择目录", self._pick_upload_dir).pack(anchor="w", pady=2)
+
+        tk.Label(up_frame, text="目标仓库地址（留空则推送到已有remote）：",
+                 bg=BG, fg=TEXT_DIM, font=("微软雅黑",9)).pack(anchor="w", pady=(6,0))
+        self._upload_remote = tk.StringVar()
+        tk.Entry(up_frame, textvariable=self._upload_remote, bg=BG2, fg=TEXT,
+                 insertbackground=TEXT, relief="flat",
+                 font=("微软雅黑",9), width=36).pack(fill="x", pady=2)
+        StyledButton(up_frame, "⬆ 推送", self._do_push, ACCENT2).pack(anchor="w", pady=4)
+
+        # 日志
+        self._git_log = tk.Text(frame, bg=BG2, fg=TEXT, font=("Consolas",9),
+                                 relief="flat", state="disabled", height=8)
+        self._git_log.pack(fill="both", expand=True, padx=16, pady=4)
+
+    def _git_log_append(self, msg):
+        self._git_log.config(state="normal")
+        self._git_log.insert("end", msg + "\n")
+        self._git_log.see("end")
+        self._git_log.config(state="disabled")
+
+    def _save_git_cfg(self):
+        cfg = {k: v.get().strip() for k, v in self._git_cfg.items()}
+        with open(os.path.join(SCRIPT_DIR, "git_config.json"), "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+        self._git_log_append("✓ 配置已保存")
+
+    def _load_git_cfg(self):
+        p = os.path.join(SCRIPT_DIR, "git_config.json")
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                cfg = json.load(f)
+            for k, v in self._git_cfg.items():
+                v.set(cfg.get(k, ""))
+
+    def _find_git(self):
+        for g in ["git", r"D:\Program Files\Git\cmd\git.exe",
+                  r"C:\Program Files\Git\cmd\git.exe"]:
+            try:
+                if subprocess.run([g, "--version"], capture_output=True, timeout=3).returncode == 0:
+                    return g
+            except Exception:
+                pass
+        return None
+
+    def _do_clone(self):
+        url = self._clone_url.get().strip()
+        dest = self._clone_dest.get().strip()
+        if not url:
+            messagebox.showwarning("提示", "请输入仓库地址")
+            return
+        git = self._find_git()
+        if not git:
+            messagebox.showerror("错误", "未找到 git，请先安装 Git")
+            return
+
+        # 注入 token 到 URL
+        url_with_token = self._inject_token(url)
+        repo_name = url.rstrip("/").split("/")[-1].replace(".git", "")
+        clone_to = os.path.join(dest, repo_name)
+
+        self._git_log_append(f"⬇ 克隆 {url} → {clone_to}")
+        import threading
+        def do():
+            r = subprocess.run([git, "clone", url_with_token, clone_to],
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+            if r.returncode == 0:
+                self.after(0, lambda: self._git_log_append(f"✓ 克隆成功：{clone_to}"))
+                # 询问是否加入工具管理
+                self.after(0, lambda: self._ask_add_to_tools(clone_to, repo_name))
+            else:
+                err = r.stderr or r.stdout
+                self.after(0, lambda: self._git_log_append(f"✗ 克隆失败：{err[:200]}"))
+        threading.Thread(target=do, daemon=True).start()
+
+    def _inject_token(self, url):
+        """把 token 注入到 HTTPS URL 里"""
+        cfg = {k: v.get().strip() for k, v in self._git_cfg.items()}
+        if "github.com" in url and cfg.get("github_token"):
+            return url.replace("https://", f"https://{cfg['github_token']}@")
+        if "gitee.com" in url and cfg.get("gitee_token"):
+            return url.replace("https://", f"https://{cfg['gitee_token']}@")
+        gitlab_url = cfg.get("gitlab_url", "")
+        if gitlab_url and gitlab_url in url and cfg.get("gitlab_token"):
+            return url.replace("https://", f"https://oauth2:{cfg['gitlab_token']}@")
+        return url
+
+    def _ask_add_to_tools(self, path, name):
+        if messagebox.askyesno("加入工具管理", f"是否将「{name}」加入工具管理列表？"):
+            self._process_path(path)
+
+    def _on_upload_drop(self, event):
+        raw = event.data.strip()
+        paths = []
+        if raw.startswith("{"):
+            import re
+            paths = [a or b for a, b in re.findall(r'\{([^}]+)\}|(\S+)', raw)]
+        else:
+            paths = raw.split()
+        for p in paths:
+            p = p.strip().strip('"')
+            if p:
+                self._prepare_upload(p)
+
+    def _pick_upload_dir(self):
+        p = filedialog.askdirectory(title="选择要上传的项目目录")
+        if p:
+            self._prepare_upload(p)
+
+    def _prepare_upload(self, path):
+        # 如果是快捷方式，询问是否上传整个项目
+        if path.lower().endswith(".lnk"):
+            target = self._resolve_lnk(path)
+            if target and os.path.isfile(target):
+                proj_dir = os.path.dirname(target)
+                ans = messagebox.askyesnocancel(
+                    "上传整个项目？",
+                    f"快捷方式指向：{target}\n\n"
+                    f"是 → 上传整个项目目录：{proj_dir}\n"
+                    f"否 → 只上传此文件")
+                if ans is None: return
+                path = proj_dir if ans else target
+            elif target:
+                path = target
+
+        self._upload_drop.config(text=f"📂 {os.path.basename(path)}")
+        remote = self._upload_remote.get().strip()
+        self._do_push_path(path, remote)
+
+    def _do_push(self):
+        # 从 drop 区域取当前路径
+        txt = self._upload_drop.cget("text")
+        if txt.startswith("📂  拖拽"):
+            messagebox.showwarning("提示", "请先拖拽或选择要上传的项目目录")
+            return
+        # 重新触发（用户可能改了 remote）
+        messagebox.showinfo("提示", "请重新拖拽或选择目录以推送")
+
+    def _do_push_path(self, path, remote_url=""):
+        git = self._find_git()
+        if not git:
+            messagebox.showerror("错误", "未找到 git")
+            return
+        import threading
+        def do():
+            # 如果目录没有 .git，先 init
+            git_dir = os.path.join(path, ".git")
+            if not os.path.exists(git_dir):
+                subprocess.run([git, "-C", path, "init"], capture_output=True)
+                self.after(0, lambda: self._git_log_append("✓ git init 完成"))
+
+            # 设置 remote
+            if remote_url:
+                url_with_token = self._inject_token(remote_url)
+                r = subprocess.run([git, "-C", path, "remote", "get-url", "origin"],
+                                   capture_output=True)
+                if r.returncode != 0:
+                    subprocess.run([git, "-C", path, "remote", "add", "origin",
+                                    url_with_token], capture_output=True)
+                else:
+                    subprocess.run([git, "-C", path, "remote", "set-url", "origin",
+                                    url_with_token], capture_output=True)
+
+            # add + commit + push
+            subprocess.run([git, "-C", path, "add", "-A"], capture_output=True)
+            r = subprocess.run([git, "-C", path, "commit", "-m", "上传项目"],
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+            if "nothing to commit" in (r.stdout + r.stderr):
+                self.after(0, lambda: self._git_log_append("ℹ 无变更，直接推送"))
+
+            r = subprocess.run([git, "-C", path, "push", "-u", "origin", "main",
+                                 "--force"],
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+            if r.returncode == 0:
+                self.after(0, lambda: self._git_log_append("✓ 推送成功"))
+            else:
+                err = r.stderr or r.stdout
+                self.after(0, lambda: self._git_log_append(f"✗ 推送失败：{err[:300]}"))
+        threading.Thread(target=do, daemon=True).start()
+        self._git_log_append(f"⬆ 推送 {path} ...")
 
     # ── 文件清理页 ────────────────────────────────────
 

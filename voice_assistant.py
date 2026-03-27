@@ -680,6 +680,11 @@ class VoiceAssistant(tk.Tk):
                   relief="flat", font=("微软雅黑",10), padx=12, pady=8,
                   cursor="hand2", command=self._toggle_autostart).pack(side="left", padx=4)
 
+        self.stop_btn = tk.Button(btn_frame, text="⏹ 停止", bg=DANGER, fg=BG,
+                  relief="flat", font=("微软雅黑",10), padx=12, pady=8,
+                  cursor="hand2", command=self._stop_task)
+        self.stop_btn.pack(side="left", padx=4)
+
         tk.Button(btn_frame, text="清空", bg="#45475a", fg=TEXT,
                   relief="flat", font=("微软雅黑",10), padx=12, pady=8,
                   cursor="hand2", command=self._clear_chat).pack(side="right", padx=4)
@@ -772,6 +777,22 @@ class VoiceAssistant(tk.Tk):
     def _auto_wake(self):
         if not self.wake_mode:
             self._toggle_wake()
+
+    def _stop_task(self):
+        """立即停止当前任务（TTS朗读、AI生成、Win+H等）"""
+        self._task_stop.set()
+        # 停止TTS
+        try:
+            import pyttsx3
+            # pyttsx3 没有全局stop，用新引擎覆盖
+        except Exception:
+            pass
+        self._set_status("● 已停止", DANGER)
+        self._append("system", "⏹ 已停止当前任务")
+        # 恢复状态
+        self.after(1500, lambda: self._set_status(
+            "● 监听唤醒词" if self.wake_mode else "● 待机",
+            ACCENT2 if self.wake_mode else TEXT_DIM))
 
     # ── 工具方法 ──────────────────────────────────────
     def _append(self, tag, text):
@@ -984,22 +1005,22 @@ while ($true) {
 
     def _on_wake_with_cmd(self, cmd):
         """唤醒词和指令在同一句话里，直接处理指令"""
-        self._task_stop.clear()
+        self._task_stop.set()   # 中断当前任务
+        speak.__dict__.pop("_engine", None)  # 停止TTS
         if not self.winfo_viewable():
             self._show_window()
         self._set_status("● 处理指令", ACCENT)
         self._append("system", f"✨ 小K已唤醒，识别到指令：{cmd}")
+        self._task_stop.clear()
         self._handle_input(cmd)
 
     def _on_wake(self):
         """唤醒：中断当前任务，触发 Win+H 云端语音识别"""
-        self._task_stop.clear()
-        # 弹出窗口
+        self._task_stop.set()   # 中断当前任务
         self.deiconify()
         self.lift()
         self.focus_force()
         self._append("system", "✨ 小K已唤醒，请说出指令...")
-        # 延迟一点让窗口完全显示后再触发 Win+H
         self.after(300, self._trigger_winh_input)
 
     def _listen_command(self):
@@ -1032,20 +1053,24 @@ while ($true) {
         self._append("user", text)
         self._append("ai", "")
         self._set_status("● 处理中", ACCENT)
+        self._task_stop.clear()  # 开始新任务前清除停止标志
         def run():
             result = execute_command(
                 text,
-                log_fn=lambda m: self.after(0, lambda msg=m: self._append("system",msg)),
+                log_fn=lambda m: self.after(0, lambda msg=m: self._append("system", msg)),
                 stream_fn=lambda p, clear=False: self.after(
-                    0, lambda piece=p, c=clear: self._stream_append(piece,c)))
+                    0, lambda piece=p, c=clear: self._stream_append(piece, c)))
+            # 任务被中断则不输出结果
+            if self._task_stop.is_set():
+                return
             self.after(0, lambda: self._set_status(
                 "● 监听唤醒词" if self.wake_mode else "● 待机",
                 ACCENT2 if self.wake_mode else TEXT_DIM))
             if result and not any(w in text for w in ["写","生成","帮我写","创作"]):
                 self.after(0, lambda r=result: self._stream_append(r, clear=True))
-                # 语音朗读回复
-                speak(result)
-            self.after(0, lambda: self._append("system",""))
+                if not self._task_stop.is_set():
+                    speak(result)
+            self.after(0, lambda: self._append("system", ""))
         threading.Thread(target=run, daemon=True).start()
 
     # ── 语音设置 ──────────────────────────────────────

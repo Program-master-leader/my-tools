@@ -560,7 +560,8 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         import urllib.request, threading
         def do_download():
             os.makedirs(os.path.dirname(abs_path) or SCRIPT_DIR, exist_ok=True)
-            for src, label in [(url, "GitHub"), (url_bak, "Gitee")]:
+            # 优先 Gitee（国内快），再试 GitHub
+            for src, label in [(url_bak, "Gitee"), (url, "GitHub")]:
                 if not src:
                     continue
                 try:
@@ -572,7 +573,7 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                     return
                 except Exception:
                     continue
-            self.after(0, lambda: messagebox.showerror("下载失败", "GitHub 和 Gitee 均无法访问，请检查网络"))
+            self.after(0, lambda: messagebox.showerror("下载失败", "Gitee 和 GitHub 均无法访问，请检查网络"))
 
         messagebox.showinfo("开始下载", f"正在下载「{t['name']}」，请稍候...")
         threading.Thread(target=do_download, daemon=True).start()

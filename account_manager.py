@@ -111,7 +111,7 @@ class AccountManager(tk.Tk):
         bar = tk.Frame(self, bg=BG, pady=6); bar.pack(fill="x", padx=16)
         tk.Label(bar, text="搜索：", bg=BG, fg=TEXT, font=("微软雅黑",10)).pack(side="left")
         self.search_var = tk.StringVar()
-        self.search_var.trace("w", lambda *_: self._refresh())
+        self.search_var.trace_add("write", lambda *_: self._refresh())
         tk.Entry(bar, textvariable=self.search_var, bg=BG2, fg=TEXT,
                  insertbackground=TEXT, relief="flat",
                  font=("微软雅黑",10), width=20).pack(side="left", padx=6, ipady=4)
@@ -250,7 +250,7 @@ class AccountManager(tk.Tk):
                     if kw.lower() in name.lower():
                         lb.insert("end", name)
             _fill()
-            sv.trace("w", lambda *_: _fill(sv.get()))
+            sv.trace_add("write", lambda *_: _fill(sv.get()))
             def confirm():
                 sel = lb.curselection()
                 if not sel: return
@@ -458,7 +458,7 @@ class AccountManager(tk.Tk):
         bar = tk.Frame(self, bg=BG, pady=6); bar.pack(fill="x", padx=16)
         tk.Label(bar, text="搜索：", bg=BG, fg=TEXT, font=("微软雅黑",10)).pack(side="left")
         self.search_var = tk.StringVar()
-        self.search_var.trace("w", lambda *_: self._refresh())
+        self.search_var.trace_add("write", lambda *_: self._refresh())
         tk.Entry(bar, textvariable=self.search_var, bg=BG2, fg=TEXT,
                  insertbackground=TEXT, relief="flat",
                  font=("微软雅黑",10), width=20).pack(side="left", padx=6, ipady=4)

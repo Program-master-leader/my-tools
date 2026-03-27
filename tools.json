@@ -84,6 +84,15 @@
     "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/gui_center.py"
   },
   {
+    "name": "KHY-Quant 量化交易系统",
+    "path": "D:\\pdf小工具\\KHY-Quant-纯净版",
+    "desc": "量化交易毕业设计，含前后端+AI引擎",
+    "launch": "D:\\pdf小工具\\KHY-Quant-纯净版\\启动.bat",
+    "launch_app": "D:\\pdf小工具\\KHY-Quant-纯净版\\app\\KHY-Quant量化交易系统.exe",
+    "url": "",
+    "url_backup": ""
+  },
+  {
     "name": "Docker",
     "path": "C:\\Program Files\\Docker\\Docker",
     "desc": "docker容器部署x64",

@@ -147,64 +147,55 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         tk.Label(bar, text="🛠  工具管理", bg=BG, fg=TEXT,
                  font=("微软雅黑", 13, "bold")).pack(side="left")
         StyledButton(bar, "＋ 添加工具", self.add_tool, ACCENT).pack(side="right", padx=4)
-        StyledButton(bar, "▶ 启动", self.run_tool).pack(side="right", padx=4)
         StyledButton(bar, "✎ 编辑", self.edit_tool).pack(side="right", padx=4)
         StyledButton(bar, "✕ 删除", self.delete_tool, DANGER).pack(side="right", padx=4)
         StyledButton(bar, "⬇ 下载", self.download_tool, "#89b4fa").pack(side="right", padx=4)
 
-        # 拖拽区域
+        # 拖拽提示
         if _DND_OK:
             drop_hint = "📂  将文件、文件夹或快捷方式拖拽到此处添加工具"
             drop_color = BG3
         else:
-            drop_hint = "提示：点击「添加工具」选择文件/文件夹（pip install tkinterdnd2 可启用拖拽）"
+            drop_hint = "提示：点击「添加工具」选择文件/文件夹"
             drop_color = BG2
-
-        self.drop_zone = tk.Label(
-            frame, text=drop_hint, bg=drop_color, fg=TEXT_DIM,
+        self.drop_zone = tk.Label(frame, text=drop_hint, bg=drop_color, fg=TEXT_DIM,
             font=("微软雅黑", 9), pady=8, relief="flat", cursor="hand2")
         self.drop_zone.pack(fill="x", padx=16, pady=(0, 4))
-
         if _DND_OK:
             self.drop_zone.drop_target_register(DND_FILES)
             self.drop_zone.dnd_bind("<<Drop>>", self._on_drop)
-            self.drop_zone.bind("<Enter>", lambda e: self.drop_zone.config(bg=BTN_HOV))
-            self.drop_zone.bind("<Leave>", lambda e: self.drop_zone.config(bg=BG3))
 
-        # 列表
-        cols = ("名称", "类型", "描述", "路径", "状态")
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("Custom.Treeview",
-                        background=BG2, foreground=TEXT,
-                        fieldbackground=BG2, rowheight=32,
-                        font=("微软雅黑", 10))
-        style.configure("Custom.Treeview.Heading",
-                        background=BG3, foreground=ACCENT,
-                        font=("微软雅黑", 10, "bold"))
-        style.map("Custom.Treeview", background=[("selected", BG3)],
-                  foreground=[("selected", ACCENT)])
+        # 滚动卡片列表（支持每行内嵌启动按钮）
+        container = tk.Frame(frame, bg=BG)
+        container.pack(fill="both", expand=True, padx=16, pady=4)
 
-        tree_frame = tk.Frame(frame, bg=BG)
-        tree_frame.pack(fill="both", expand=True, padx=16, pady=4)
-
-        self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings",
-                                  style="Custom.Treeview")
-        widths = [160, 70, 180, 280, 60]
-        for col, w in zip(cols, widths):
-            self.tree.heading(col, text=col)
-            self.tree.column(col, width=w, minwidth=50)
-
-        sb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        self.tree.pack(side="left", fill="both", expand=True)
+        self._canvas = tk.Canvas(container, bg=BG, highlightthickness=0)
+        sb = ttk.Scrollbar(container, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=sb.set)
+        self._canvas.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
-        self.tree.bind("<Double-1>", lambda e: self.run_tool())
 
-        # 列表也支持拖拽
-        if _DND_OK:
-            self.tree.drop_target_register(DND_FILES)
-            self.tree.dnd_bind("<<Drop>>", self._on_drop)
+        self._list_frame = tk.Frame(self._canvas, bg=BG)
+        self._canvas_window = self._canvas.create_window(
+            (0, 0), window=self._list_frame, anchor="nw")
+        self._list_frame.bind("<Configure>",
+            lambda e: self._canvas.configure(
+                scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<Configure>",
+            lambda e: self._canvas.itemconfig(
+                self._canvas_window, width=e.width))
+        self._canvas.bind_all("<MouseWheel>",
+            lambda e: self._canvas.yview_scroll(-1*(e.delta//120), "units"))
+
+        # 列头
+        hdr = tk.Frame(self._list_frame, bg=BG3)
+        hdr.pack(fill="x", pady=(0,2))
+        for txt, w in [("名称",160),("描述",200),("路径",260),("状态",70),("操作",120)]:
+            tk.Label(hdr, text=txt, bg=BG3, fg=ACCENT,
+                     font=("微软雅黑",9,"bold"), width=w//8, anchor="w",
+                     padx=6).pack(side="left")
+
+        self._selected_idx_var = None
 
     def _on_drop(self, event):
         """处理拖拽进来的文件/文件夹"""
@@ -390,34 +381,112 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
 
     def refresh_tools(self):
         self.tools = load_tools()
-        self.tree.delete(*self.tree.get_children())
-        for t in self.tools:
+        # 清空卡片列表
+        for w in self._list_frame.winfo_children():
+            if isinstance(w, tk.Frame) and w != self._list_frame:
+                w.destroy()
+        # 重新渲染列头后面的内容
+        for widget in self._list_frame.winfo_children():
+            widget.destroy()
+
+        # 列头
+        hdr = tk.Frame(self._list_frame, bg=BG3)
+        hdr.pack(fill="x", pady=(0, 1))
+        for txt, w in [("名称",18),("描述",24),("路径",30),("状态",8),("操作",14)]:
+            tk.Label(hdr, text=txt, bg=BG3, fg=ACCENT,
+                     font=("微软雅黑",9,"bold"), width=w, anchor="w",
+                     padx=4).pack(side="left")
+
+        self._row_frames = []
+        for i, t in enumerate(self.tools):
             abs_path = resolve_path(t["path"])
-            ext    = os.path.splitext(t["path"])[1].upper() or "文件夹"
-            exists = os.path.exists(abs_path)
-            has_git = t.get("url") or t.get("url_backup")
-            has_pan = t.get("pan_url")
+            exists   = os.path.exists(abs_path)
+            has_pan  = t.get("pan_url")
+            has_git  = t.get("url") or t.get("url_backup")
+
             if exists:
-                status = "✓ 正常"
+                status_txt, status_fg = "✓ 正常", ACCENT2
             elif has_pan:
-                status = "📦 网盘"
+                status_txt, status_fg = "📦 网盘", "#f9e2af"
             elif has_git:
-                status = "⬇ 可下载"
+                status_txt, status_fg = "⬇ 可下载", ACCENT
             else:
-                status = "✗ 丢失"
-            tag = "ok" if exists else "pan" if has_pan else "missing"
-            self.tree.insert("", "end", values=(
-                t["name"], ext, t.get("desc", ""), t["path"], status), tags=(tag,))
-        self.tree.tag_configure("ok",      foreground=TEXT)
-        self.tree.tag_configure("pan",     foreground="#f9e2af")
-        self.tree.tag_configure("missing", foreground=DANGER)
+                status_txt, status_fg = "✗ 丢失", DANGER
+
+            row_bg = BG2 if i % 2 == 0 else BG3
+            row = tk.Frame(self._list_frame, bg=row_bg, pady=4)
+            row.pack(fill="x", pady=1)
+            self._row_frames.append(row)
+
+            # 点击行选中
+            def _select(e, idx=i, r=row):
+                for rf in self._row_frames:
+                    rf.config(bg=BG2 if self._row_frames.index(rf) % 2 == 0 else BG3)
+                r.config(bg="#3d3d5c")
+                self._selected_idx_var = idx
+            row.bind("<Button-1>", _select)
+
+            # 名称
+            tk.Label(row, text=t["name"], bg=row_bg, fg=TEXT,
+                     font=("微软雅黑",10), width=18, anchor="w",
+                     padx=4).pack(side="left")
+            # 描述
+            tk.Label(row, text=t.get("desc","")[:20], bg=row_bg, fg=TEXT_DIM,
+                     font=("微软雅黑",9), width=24, anchor="w").pack(side="left")
+            # 路径
+            tk.Label(row, text=t["path"][:35], bg=row_bg, fg=TEXT_DIM,
+                     font=("微软雅黑",9), width=30, anchor="w").pack(side="left")
+            # 状态
+            tk.Label(row, text=status_txt, bg=row_bg, fg=status_fg,
+                     font=("微软雅黑",9), width=8, anchor="w").pack(side="left")
+
+            # 操作按钮区
+            btn_area = tk.Frame(row, bg=row_bg)
+            btn_area.pack(side="left", padx=4)
+
+            # 判断是否可启动
+            launch_path = t.get("launch") or t.get("launch_app") or (abs_path if exists else None)
+            can_launch  = launch_path and os.path.exists(launch_path)
+
+            if can_launch:
+                def _launch(lp=launch_path, tn=t["name"]):
+                    ext = os.path.splitext(lp)[1].lower()
+                    if ext == ".py":
+                        subprocess.Popen(f'start cmd /k python "{lp}"', shell=True)
+                    elif ext in (".bat", ".cmd"):
+                        subprocess.Popen(f'start cmd /k "{lp}"', shell=True)
+                    elif ext == ".exe":
+                        subprocess.Popen(f'"{lp}"', shell=True)
+                    elif os.path.isdir(lp):
+                        subprocess.Popen(f'explorer "{lp}"', shell=True)
+                    else:
+                        subprocess.Popen(f'start "" "{lp}"', shell=True)
+                tk.Button(btn_area, text="▶ 启动", bg=ACCENT2, fg=BG,
+                          relief="flat", font=("微软雅黑",9), padx=8, pady=3,
+                          cursor="hand2", command=_launch).pack(side="left", padx=2)
+            elif has_pan:
+                def _open_pan(url=t["pan_url"]):
+                    import webbrowser; webbrowser.open(url)
+                tk.Button(btn_area, text="📦 网盘", bg="#f9e2af", fg=BG,
+                          relief="flat", font=("微软雅黑",9), padx=8, pady=3,
+                          cursor="hand2", command=_open_pan).pack(side="left", padx=2)
+            elif has_git:
+                tk.Button(btn_area, text="⬇ 下载", bg="#89b4fa", fg=BG,
+                          relief="flat", font=("微软雅黑",9), padx=8, pady=3,
+                          cursor="hand2",
+                          command=lambda idx=i: self._download_by_idx(idx)
+                          ).pack(side="left", padx=2)
+
+            # 绑定子控件点击也能选中行
+            for child in row.winfo_children():
+                if not isinstance(child, tk.Button):
+                    child.bind("<Button-1>", _select)
 
     def _selected_idx(self):
-        sel = self.tree.selection()
-        if not sel:
-            messagebox.showwarning("提示", "请先选择一个工具")
+        if self._selected_idx_var is None:
+            messagebox.showwarning("提示", "请先点击选择一个工具")
             return None
-        return self.tree.index(sel[0])
+        return self._selected_idx_var
 
     def add_tool(self):
         choice = messagebox.askquestion("添加工具", "添加文件还是文件夹？\n\n是 = 文件/快捷方式\n否 = 文件夹")
@@ -430,6 +499,10 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             path = filedialog.askdirectory(title="选择工具文件夹或项目目录")
         if path:
             self._process_path(path)
+
+    def _download_by_idx(self, idx):
+        self._selected_idx_var = idx
+        self.download_tool()
 
     def download_tool(self):
         idx = self._selected_idx()
@@ -472,12 +545,15 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             return
         t = self.tools[idx]
         abs_path = resolve_path(t["path"])
-        # 文件不存在但有网盘链接，直接打开网盘
         if not os.path.exists(abs_path) and t.get("pan_url"):
             import webbrowser
             webbrowser.open(t["pan_url"])
             return
-        launch_tool(t)
+        # 优先用 launch 字段
+        lp = t.get("launch") or t.get("launch_app") or abs_path
+        if not os.path.exists(lp):
+            lp = abs_path
+        launch_tool({"path": lp, "name": t["name"]})
 
     def edit_tool(self):
         idx = self._selected_idx()

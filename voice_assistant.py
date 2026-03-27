@@ -895,16 +895,15 @@ class VoiceAssistant(tk.Tk):
         if not hasattr(self, "_whisper_model"):
             import whisper
             self.after(0, lambda: self._append("system", "⏳ 加载语音模型..."))
-            self._whisper_model = whisper.load_model("tiny")  # tiny比base快3倍
-            record_and_recognize._model = self._whisper_model  # 共享同一实例
+            self._whisper_model = whisper.load_model("base")
+            record_and_recognize._model = self._whisper_model
             self.after(0, lambda: self._append("system", "✓ 模型就绪，说「小K」唤醒"))
         elif hasattr(record_and_recognize, "_model"):
-            self._whisper_model = record_and_recognize._model  # 复用已加载的模型
+            self._whisper_model = record_and_recognize._model
         model = self._whisper_model
 
         device_info = sd.query_devices(kind="input")
         native_rate = int(device_info["default_samplerate"])
-        chunk_size = int(native_rate * 0.1)
 
         calib = sd.rec(int(0.5 * native_rate), samplerate=native_rate,
                        channels=1, dtype="int16")
@@ -912,78 +911,79 @@ class VoiceAssistant(tk.Tk):
         noise = np.abs(calib.flatten()).mean()
         threshold = max(noise * 2.0, 2)
 
-        frames = []
-        silent_chunks = 0
-        speaking = False
+        # 固定1.5秒滑动窗口检测，不等VAD，确保每声「小K」都被捕捉
+        win_sec = 1.5
+        win_samples = int(win_sec * native_rate)
+        step_samples = int(0.5 * native_rate)  # 每0.5秒滑动一次
+        ring_buf = np.zeros(win_samples, dtype=np.int16)
+        collected = 0
 
         with sd.InputStream(samplerate=native_rate, channels=1, dtype="int16") as stream:
             while self.wake_mode:
                 try:
+                    chunk_size = step_samples
                     data, _ = stream.read(chunk_size)
                     data = data.flatten()
+
+                    # 滑动窗口：丢弃最旧的，追加最新的
+                    ring_buf = np.roll(ring_buf, -len(data))
+                    ring_buf[-len(data):] = data[:len(ring_buf) - max(0, len(ring_buf)-len(data))]
+                    collected += len(data)
+
+                    # 能量检测：这0.5秒有声音才处理
                     energy = np.abs(data).mean()
+                    if energy < threshold or collected < win_samples:
+                        continue
 
-                    if energy > threshold:
-                        speaking = True
-                        silent_chunks = 0
-                        frames.append(data)
-                    elif speaking:
-                        frames.append(data)
-                        silent_chunks += 1
-                        if silent_chunks >= 5:  # 0.5秒静音即触发
-                            audio_np = np.concatenate(frames)
-                            frames = []; silent_chunks = 0; speaking = False
-                            if not self.wake_mode:
-                                break
+                    # 重采样到16000
+                    from scipy.signal import resample as sp_resample
+                    tlen = int(len(ring_buf) * 16000 / native_rate)
+                    audio_np = sp_resample(ring_buf, max(tlen, 1)).astype(np.int16)
+                    audio_np = _amplify(audio_np, target_peak=24000)
+                    arr = audio_np.astype(np.float32) / 32768.0
 
-                            from scipy.signal import resample as sp_resample
-                            tlen = int(len(audio_np) * 16000 / native_rate)
-                            audio_np = sp_resample(audio_np, max(tlen,1)).astype(np.int16)
-                            audio_np = _amplify(audio_np, target_peak=24000)
-                            arr = audio_np.astype(np.float32) / 32768.0
-                            if len(arr) < 800 or np.abs(arr).max() < 0.02:
-                                continue
+                    if np.abs(arr).max() < 0.02:
+                        continue
 
-                            try:
-                                result = model.transcribe(
-                                    arr, language="zh", fp16=False,
-                                    no_speech_threshold=0.2,
-                                    logprob_threshold=-2.5,
-                                    condition_on_previous_text=False,
-                                    temperature=0,
-                                )
-                                text = result["text"].strip()
-                            except Exception:
-                                continue
+                    try:
+                        result = model.transcribe(
+                            arr, language="zh", fp16=False,
+                            no_speech_threshold=0.3,
+                            logprob_threshold=-2.0,
+                            condition_on_previous_text=False,
+                            temperature=0,
+                        )
+                        text = result["text"].strip()
+                    except Exception:
+                        continue
 
-                            if not text:
-                                continue
+                    if not text:
+                        continue
 
-                            self.after(0, lambda t=text: self._append("system", f"🔍 {t}"))
+                    self.after(0, lambda t=text: self._append("system", f"🔍 {t}"))
 
-                            # 超宽松匹配：「小」+任意字母或常见误识别字
-                            t_low = text.lower().replace(" ","")
-                            wake_hits = [
-                                "小k","小可","小客","小卡","小凯","小开","小克",
-                                "晓k","肖k","小科","小壳","小棵","小柯","小哥",
-                                "小鬼","小歌","小格","小葛","小key","xiaok",
-                            ]
-                            matched = any(w in t_low for w in wake_hits)
-                            if not matched:
-                                matched = bool(re.search(
-                                    r"小[a-zA-Z\d可客卡凯开克科壳棵柯哥鬼歌格葛隔割]", text))
-                            if not matched:
-                                continue
+                    # 匹配唤醒词
+                    t_low = text.lower().replace(" ","")
+                    wake_hits = [
+                        "小k","小可","小客","小卡","小凯","小开","小克",
+                        "晓k","肖k","小科","小壳","小棵","小柯","小哥",
+                        "小鬼","小歌","小格","小葛","小key","xiaok",
+                        "小黑","小亲","小铃",
+                    ]
+                    matched = any(w in t_low for w in wake_hits)
+                    if not matched:
+                        matched = bool(re.search(
+                            r"小[a-zA-Z\d可客卡凯开克科壳棵柯哥鬼歌格葛隔割黑亲铃]", text))
+                    if not matched:
+                        continue
 
-                            self._task_stop.set()
-                            cmd = _extract_command_after_wake(text)
-                            if cmd:
-                                self.after(0, lambda c=cmd: self._on_wake_with_cmd(c))
-                            else:
-                                self.after(0, self._on_wake)
+                    self._task_stop.set()
+                    cmd = _extract_command_after_wake(text)
+                    if cmd:
+                        self.after(0, lambda c=cmd: self._on_wake_with_cmd(c))
                     else:
-                        if frames:
-                            frames = []
+                        self.after(0, self._on_wake)
+
                 except Exception:
                     pass
 

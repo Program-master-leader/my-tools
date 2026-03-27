@@ -157,12 +157,27 @@ class VideoDownloader(tk.Tk):
                  font=("微软雅黑",9), width=12, anchor="w").pack(side="left")
         self.cookie_var = tk.StringVar()
         tk.Entry(r3, textvariable=self.cookie_var, bg=BG3, fg=TEXT,
-                 insertbackground=TEXT, relief="flat", font=("微软雅黑",9), width=36
+                 insertbackground=TEXT, relief="flat", font=("微软雅黑",9), width=30
                  ).pack(side="left", padx=4)
-        tk.Button(r3, text="📁 选择", bg=BG3, fg=TEXT, relief="flat",
+        tk.Button(r3, text="📁 选择文件", bg=BG3, fg=TEXT, relief="flat",
                   font=("微软雅黑",9), cursor="hand2",
                   command=self._pick_cookie).pack(side="left", padx=2)
-        tk.Label(r3, text="（用于下载需登录的内容，如B站大会员）",
+
+        # 从浏览器自动提取 Cookie
+        r4 = tk.Frame(self._adv_frame, bg=BG2); r4.pack(fill="x", pady=4)
+        tk.Label(r4, text="从浏览器提取：", bg=BG2, fg=TEXT,
+                 font=("微软雅黑",9), width=12, anchor="w").pack(side="left")
+        self.browser_var = tk.StringVar(value="chrome")
+        browsers = ["chrome", "edge", "firefox", "brave", "opera", "vivaldi"]
+        ttk.Combobox(r4, textvariable=self.browser_var,
+                     values=browsers, width=10, state="readonly").pack(side="left", padx=4)
+        tk.Button(r4, text="🍪 提取Cookie", bg=ACCENT, fg=BG,
+                  relief="flat", font=("微软雅黑",9), padx=10, cursor="hand2",
+                  command=self._extract_browser_cookie).pack(side="left", padx=4)
+        self.cookie_status = tk.Label(r4, text="", bg=BG2, fg=ACCENT2,
+                                       font=("微软雅黑",9))
+        self.cookie_status.pack(side="left", padx=4)
+        tk.Label(r4, text="（需先在浏览器登录B站/YouTube等）",
                  bg=BG2, fg=TEXT_DIM, font=("微软雅黑",8)).pack(side="left")
 
         # 下载按钮
@@ -226,6 +241,56 @@ class VideoDownloader(tk.Tk):
             filetypes=[("Cookie文件","*.txt *.json"),("所有文件","*.*")])
         if f:
             self.cookie_var.set(f)
+
+    def _extract_browser_cookie(self):
+        """用 yt-dlp 直接从浏览器提取 Cookie，保存到本地文件"""
+        if not _ensure_ytdlp():
+            self._log("请先等待 yt-dlp 安装完成", "err"); return
+        browser = self.browser_var.get()
+        save_path = os.path.join(os.path.expanduser("~"), f".khy_{browser}_cookies.txt")
+        self.cookie_status.config(text="⏳ 提取中...", fg=ACCENT)
+        def do():
+            try:
+                import yt_dlp
+                # yt-dlp 支持直接从浏览器读取 cookie
+                opts = {
+                    "cookiesfrombrowser": (browser,),
+                    "cookiefile": save_path,
+                    "quiet": True,
+                    "skip_download": True,
+                }
+                # 用一个简单的公开视频测试并顺便保存 cookie
+                test_urls = {
+                    "bilibili": "https://www.bilibili.com",
+                    "youtube":  "https://www.youtube.com",
+                }
+                # 直接导出 cookie 不需要 URL
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    # 触发 cookie 读取和保存
+                    try:
+                        ydl.extract_info("https://www.bilibili.com/video/BV1xx411c7mD",
+                                         download=False)
+                    except Exception:
+                        pass  # 不在乎视频信息，只要 cookie 被保存了
+                if os.path.exists(save_path) and os.path.getsize(save_path) > 0:
+                    self.after(0, lambda: [
+                        self.cookie_var.set(save_path),
+                        self.cookie_status.config(
+                            text=f"✓ 已提取 {browser} Cookie", fg=ACCENT2),
+                        self._log(f"✓ Cookie 已从 {browser} 提取并保存", "ok")
+                    ])
+                else:
+                    self.after(0, lambda: [
+                        self.cookie_status.config(text="✗ 提取失败", fg=DANGER),
+                        self._log(f"✗ 未能从 {browser} 提取 Cookie，请确认浏览器已登录且已关闭", "err")
+                    ])
+            except Exception as e:
+                err = str(e)
+                self.after(0, lambda: [
+                    self.cookie_status.config(text="✗ 提取失败", fg=DANGER),
+                    self._log(f"✗ Cookie 提取失败：{err[:150]}", "err")
+                ])
+        threading.Thread(target=do, daemon=True).start()
 
     def _toggle_adv(self):
         if self._adv_open.get():
@@ -373,10 +438,15 @@ class VideoDownloader(tk.Tk):
                 proxy = self.proxy_var.get().strip()
                 if proxy:
                     opts["proxy"] = proxy
-                # Cookie
+                # Cookie：优先文件，其次直接读浏览器
                 cookie = self.cookie_var.get().strip()
                 if cookie and os.path.exists(cookie):
                     opts["cookiefile"] = cookie
+                elif not cookie:
+                    # 没有指定文件时，尝试直接从选定浏览器读取
+                    browser = self.browser_var.get()
+                    opts["cookiesfrombrowser"] = (browser,)
+                    self._log(f"  使用 {browser} 浏览器 Cookie（需已登录）")
                 if is_audio:
                     opts["postprocessors"] = [{
                         "key": "FFmpegExtractAudio",

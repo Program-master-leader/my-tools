@@ -663,7 +663,8 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         cfg_frame.pack(fill="x", padx=16, pady=4)
 
         self._git_cfg = {}
-        self._git_status_labels = {}  # 存每行的状态灯
+        self._git_status_labels = {}
+        self._git_link_labels = {}  # 存每行的链接label，验证后动态更新
         for label, key, show, link, verify_fn in [
             ("GitHub Token", "github_token", "*",
              "https://github.com/settings/tokens/new",
@@ -715,11 +716,13 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                           command=lambda fn=verify_fn, var=v: fn(var.get().strip())
                           ).pack(side="left", padx=2)
 
-            # 🔗 获取
+            # 🔗 获取 / 验证后变「我的主页」
             lbl = tk.Label(row, text="🔗 获取", bg=BG, fg=ACCENT,
                            font=("微软雅黑",9,"underline"), cursor="hand2")
             lbl.pack(side="left", padx=4)
             lbl.bind("<Button-1>", lambda e, url=link: __import__("webbrowser").open(url))
+            if key != "gitlab_url":
+                self._git_link_labels[key] = lbl
 
         btn_row = tk.Frame(cfg_frame, bg=BG); btn_row.pack(anchor="w", pady=4)
         StyledButton(btn_row, "💾 保存配置", self._save_git_cfg, ACCENT).pack(side="left", padx=4)
@@ -788,10 +791,16 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         self._git_log.see("end")
         self._git_log.config(state="disabled")
 
-    def _set_git_status(self, key, ok):
+    def _set_git_status(self, key, ok, profile_url=""):
         lbl = self._git_status_labels.get(key)
         if lbl:
             lbl.config(fg=ACCENT2 if ok else DANGER)
+        # 验证成功后把「获取」链接改成「我的主页」
+        link_lbl = self._git_link_labels.get(key)
+        if link_lbl and ok and profile_url:
+            link_lbl.config(text="👤 我的主页", fg=ACCENT2)
+            link_lbl.bind("<Button-1>",
+                          lambda e, url=profile_url: __import__("webbrowser").open(url))
 
     def _verify_github(self, token, key="github_token"):
         if not token:
@@ -803,9 +812,11 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                 headers={"Authorization": f"token {token}", "User-Agent": "KHY-Tools"})
             with urllib.request.urlopen(req, timeout=8) as r:
                 data = json.loads(r.read())
-            self._set_git_status(key, True)
+            login = data.get('login', '')
+            profile_url = f"https://github.com/{login}"
+            self._set_git_status(key, True, profile_url)
             messagebox.showinfo("✓ GitHub 验证成功",
-                f"用户名：{data.get('login')}\n邮箱：{data.get('email') or '未公开'}\n仓库数：{data.get('public_repos')}")
+                f"用户名：{login}\n邮箱：{data.get('email') or '未公开'}\n仓库数：{data.get('public_repos')}")
         except urllib.error.HTTPError as e:
             self._set_git_status(key, False)
             messagebox.showerror("✗ 验证失败", f"HTTP {e.code}：Token 无效或权限不足")
@@ -821,9 +832,11 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             with urllib.request.urlopen(
                     f"https://gitee.com/api/v5/user?access_token={token}", timeout=8) as r:
                 data = json.loads(r.read())
-            self._set_git_status(key, True)
+            login = data.get('login', '')
+            profile_url = f"https://gitee.com/{login}"
+            self._set_git_status(key, True, profile_url)
             messagebox.showinfo("✓ Gitee 验证成功",
-                f"用户名：{data.get('login')}\n昵称：{data.get('name')}\n邮箱：{data.get('email') or '未公开'}")
+                f"用户名：{login}\n昵称：{data.get('name')}\n邮箱：{data.get('email') or '未公开'}")
         except urllib.error.HTTPError as e:
             self._set_git_status(key, False)
             messagebox.showerror("✗ 验证失败", f"HTTP {e.code}：Token 无效或已过期")
@@ -842,9 +855,11 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                 headers={"PRIVATE-TOKEN": token})
             with urllib.request.urlopen(req, timeout=8) as r:
                 data = json.loads(r.read())
-            self._set_git_status(key, True)
+            username = data.get('username', '')
+            profile_url = f"{base.rstrip('/')}/{username}"
+            self._set_git_status(key, True, profile_url)
             messagebox.showinfo("✓ GitLab 验证成功",
-                f"用户名：{data.get('username')}\n昵称：{data.get('name')}\n邮箱：{data.get('email') or '未公开'}")
+                f"用户名：{username}\n昵称：{data.get('name')}\n邮箱：{data.get('email') or '未公开'}")
         except urllib.error.HTTPError as e:
             self._set_git_status(key, False)
             messagebox.showerror("✗ 验证失败", f"HTTP {e.code}：Token 无效或地址错误")

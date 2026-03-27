@@ -59,8 +59,17 @@ def launch_tool(tool):
     elif ext == ".exe":
         subprocess.Popen(f'"{path}"', shell=True)
     elif ext in (".bat", ".cmd"):
-        # 用 list 方式避免括号/空格解析问题
-        subprocess.Popen(["cmd", "/c", "start", "cmd", "/k", f'call "{path}"'], shell=False)
+        cwd = os.path.dirname(path) or SCRIPT_DIR
+        tmp = os.path.join(cwd, "_tmp_launch.bat")
+        with open(tmp, "w") as f:
+            f.write(f'@echo off\ncall "{path}"\n')
+        def _run(tmp=tmp, cwd=cwd):
+            subprocess.Popen(["cmd", "/k", tmp], cwd=cwd, shell=False)
+            import time; time.sleep(2)
+            try: os.unlink(tmp)
+            except: pass
+        import threading
+        threading.Thread(target=_run, daemon=True).start()
     else:
         subprocess.Popen(f'start "" "{path}"', shell=True)
 
@@ -452,18 +461,30 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             if can_launch:
                 def _launch(lp=launch_path, tn=t["name"]):
                     ext = os.path.splitext(lp)[1].lower()
+                    cwd = os.path.dirname(lp) or SCRIPT_DIR
                     if ext == ".py":
-                        subprocess.Popen(f'start cmd /k python "{lp}"', shell=True)
+                        subprocess.Popen(["cmd", "/k", f'python "{lp}"'],
+                                         cwd=cwd, shell=False)
                     elif ext in (".bat", ".cmd"):
-                        # 用 cmd /c call 避免括号解析问题
-                        subprocess.Popen(
-                            f'start cmd /k "call \\"{lp}\\""', shell=True)
+                        # 用临时bat中转，绕过路径含括号的cmd解析问题
+                        tmp = os.path.join(cwd, "_tmp_launch.bat")
+                        with open(tmp, "w") as f:
+                            f.write(f'@echo off\ncall "{lp}"\n')
+                        def _run_and_clean(tmp=tmp, cwd=cwd):
+                            subprocess.Popen(["cmd", "/k", tmp],
+                                             cwd=cwd, shell=False)
+                            import time; time.sleep(2)
+                            try: os.unlink(tmp)
+                            except: pass
+                        import threading
+                        threading.Thread(target=_run_and_clean, daemon=True).start()
                     elif ext == ".exe":
-                        subprocess.Popen(f'"{lp}"', shell=True)
+                        subprocess.Popen([lp], cwd=cwd, shell=False)
                     elif os.path.isdir(lp):
-                        subprocess.Popen(f'explorer "{lp}"', shell=True)
+                        subprocess.Popen(["explorer", lp], shell=False)
                     else:
-                        subprocess.Popen(f'start "" "{lp}"', shell=True)
+                        subprocess.Popen(["cmd", "/c", "start", "", lp],
+                                         shell=False)
                 tk.Button(btn_area, text="▶ 启动", bg=ACCENT2, fg=BG,
                           relief="flat", font=("微软雅黑",9), padx=8, pady=3,
                           cursor="hand2", command=_launch).pack(side="left", padx=2)

@@ -3,8 +3,8 @@
     "name": "小K家庭电话",
     "path": "phone_server.py",
     "desc": "局域网家庭语音通话，浏览器打开即用，无需安装软件",
-    "url": "",
-    "url_backup": ""
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/phone_server.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/phone_server.py"
   },
   {
     "name": "小K语音助手",

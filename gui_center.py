@@ -39,10 +39,33 @@ def save_tools(tools):
         json.dump(tools, f, ensure_ascii=False, indent=2)
 
 def resolve_path(path):
-    """相对路径转绝对路径"""
+    """相对路径转绝对路径，自动搜索常用目录"""
     if os.path.isabs(path):
         return path
-    return os.path.join(SCRIPT_DIR, path)
+    # 先在 SCRIPT_DIR 找
+    candidate = os.path.join(SCRIPT_DIR, path)
+    if os.path.exists(candidate):
+        return candidate
+    # 再搜常用路径
+    search_roots = [
+        r"D:\pdf小工具",
+        r"C:\pdf小工具",
+        os.path.expanduser("~\\Desktop"),
+        os.path.expanduser("~\\Documents"),
+        r"D:\工具",
+        r"E:\工具",
+        r"E:\pdf小工具",
+    ]
+    fname = os.path.basename(path)
+    for root in search_roots:
+        p = os.path.join(root, fname)
+        if os.path.exists(p):
+            return p
+        # 也搜一层子目录
+        p2 = os.path.join(root, path)
+        if os.path.exists(p2):
+            return p2
+    return candidate  # 找不到返回默认路径（显示丢失）
 
 # ── 颜色主题 ──────────────────────────────────────────
 BG       = "#1e1e2e"

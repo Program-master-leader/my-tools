@@ -874,31 +874,42 @@ class VoiceAssistant(tk.Tk):
 
     def _wake_loop(self):
         """
-        唤醒词监听：用 Windows System.Speech 循环识别，准确率高。
-        识别到「小K」相关词汇立即唤醒。
+        唤醒词监听：用 Windows System.Speech 关键词语法识别，
+        只识别「小K」相关词汇，准确率极高，不会误触发。
         """
-        import subprocess, tempfile, os
+        import subprocess, os
 
-        # PowerShell 脚本：循环识别，每次最多等3秒，识别到内容立即返回
-        ps_script = r"""
+        # 只识别唤醒词的关键词语法，不用听写语法
+        wake_words_ps = '","'.join([
+            "小K","小k","小可","小客","小卡","小凯","小开","小克",
+            "晓K","晓k","肖K","肖k","小key","小壳","小科",
+            "小K小K","小k小k","小K小k","小k小K",
+        ])
+        ps_script = f"""
 Add-Type -AssemblyName System.Speech
-$info = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers() | Where-Object { $_.Culture.Name -eq 'zh-CN' } | Select-Object -First 1
-if ($info -ne $null) {
+$info = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers() | Where-Object {{ $_.Culture.Name -eq 'zh-CN' }} | Select-Object -First 1
+if ($info -ne $null) {{
     $engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine($info)
-} else {
+}} else {{
     $engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine
-}
+}}
 $engine.SetInputToDefaultAudioDevice()
-$grammar = New-Object System.Speech.Recognition.DictationGrammar
+
+# 关键词列表
+$words = @("{wake_words_ps}")
+$choices = New-Object System.Speech.Recognition.Choices($words)
+$gb = New-Object System.Speech.Recognition.GrammarBuilder($choices)
+$grammar = New-Object System.Speech.Recognition.Grammar($gb)
 $engine.LoadGrammar($grammar)
-$timeout = [System.TimeSpan]::FromSeconds(3)
-while ($true) {
+
+$timeout = [System.TimeSpan]::FromSeconds(5)
+while ($true) {{
     $result = $engine.Recognize($timeout)
-    if ($result -ne $null -and $result.Text -ne "") {
+    if ($result -ne $null -and $result.Text -ne "" -and $result.Confidence -gt 0.3) {{
         Write-Output $result.Text
         [Console]::Out.Flush()
-    }
-}
+    }}
+}}
 """
         tmp_ps = os.path.join(SCRIPT_DIR, "_wake_listener.ps1")
         with open(tmp_ps, "w", encoding="utf-8") as f:
@@ -907,9 +918,9 @@ while ($true) {
         proc = subprocess.Popen(
             ["powershell", "-ExecutionPolicy", "Bypass", "-File", tmp_ps],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            creationflags=0x08000000  # 无窗口
+            creationflags=0x08000000
         )
-        self._wake_ps_proc = proc  # 保存引用供 _trigger_winh_input 暂停用
+        self._wake_ps_proc = proc
 
         try:
             while self.wake_mode:
@@ -927,22 +938,18 @@ while ($true) {
 
                 # 纠错
                 for w, r in [
-                    ("小可","小K"), ("小客","小K"), ("小卡","小K"),
-                    ("小黑","小K"), ("小凯","小K"), ("小开","小K"),
-                    ("小克","小K"), ("晓K","小K"), ("晓k","小K"),
-                    ("肖K","小K"), ("肖k","小K"), ("小key","小K"),
-                    ("小壳","小K"), ("小科","小K"), ("小棵","小K"),
-                    ("小鬼","小K"), ("小哥","小K"),
+                    ("小可","小K"),("小客","小K"),("小卡","小K"),
+                    ("小凯","小K"),("小开","小K"),("小克","小K"),
+                    ("晓K","小K"),("晓k","小K"),("肖K","小K"),("肖k","小K"),
+                    ("小key","小K"),("小壳","小K"),("小科","小K"),
                 ]:
                     text = text.replace(w, r)
 
-                # 调试日志
                 self.after(0, lambda t=text: self._append("system", f"🔍 听到：{t}"))
 
                 if not _is_wake_word(text):
                     continue
 
-                # 唤醒
                 self._task_stop.set()
                 cmd = _extract_command_after_wake(text)
                 if cmd:

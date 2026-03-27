@@ -1,5 +1,12 @@
 [
   {
+    "name": "账号管理工具",
+    "path": "account_manager.py",
+    "desc": "管理所有软件账号，加密存储，一键启动应用",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/account_manager.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/account_manager.py"
+  },
+  {
     "name": "网页视频下载器",
     "path": "video_downloader.py",
     "desc": "下载B站/YouTube/Twitter等网站视频，支持画质选择",

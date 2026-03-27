@@ -627,11 +627,14 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         cfg_frame.pack(fill="x", padx=16, pady=4)
 
         self._git_cfg = {}
-        for label, key, show in [
-            ("GitHub Token", "github_token", "*"),
-            ("Gitee  Token", "gitee_token",  "*"),
-            ("GitLab Token", "gitlab_token", "*"),
-            ("GitLab 地址",  "gitlab_url",   ""),
+        for label, key, show, link in [
+            ("GitHub Token", "github_token", "*",
+             "https://github.com/settings/tokens/new"),
+            ("Gitee  Token", "gitee_token",  "*",
+             "https://gitee.com/profile/personal_access_tokens/new"),
+            ("GitLab Token", "gitlab_token", "*",
+             "https://gitlab.com/-/profile/personal_access_tokens"),
+            ("GitLab 地址",  "gitlab_url",   "",  "https://gitlab.com"),
         ]:
             row = tk.Frame(cfg_frame, bg=BG); row.pack(fill="x", pady=2)
             tk.Label(row, text=label, bg=BG, fg=TEXT,
@@ -640,6 +643,11 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             self._git_cfg[key] = v
             tk.Entry(row, textvariable=v, bg=BG2, fg=TEXT, insertbackground=TEXT,
                      relief="flat", font=("微软雅黑",9), show=show, width=40).pack(side="left", padx=6)
+            # 点击跳转获取 Token 的链接
+            lbl = tk.Label(row, text="🔗 获取", bg=BG, fg=ACCENT,
+                           font=("微软雅黑",9,"underline"), cursor="hand2")
+            lbl.pack(side="left", padx=2)
+            lbl.bind("<Button-1>", lambda e, url=link: __import__("webbrowser").open(url))
 
         btn_row = tk.Frame(cfg_frame, bg=BG); btn_row.pack(anchor="w", pady=4)
         StyledButton(btn_row, "💾 保存配置", self._save_git_cfg, ACCENT).pack(side="left", padx=4)

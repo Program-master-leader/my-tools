@@ -528,7 +528,17 @@ def execute_command(text, log_fn, stream_fn):
 
     launch_triggers = ["打开","启动","运行","开启","帮我打开","帮我启动","用","使用","调用"]
     if any(w in text for w in launch_triggers):
-        # 先查 tools.json
+        # 先提取软件名，再查 tools.json（避免「无忧小助手」匹配到「小K语音助手」）
+        app_name_raw = re.sub(r"(打开|启动|运行|开启|帮我打开|帮我启动)", "", text).strip()
+        app_name_raw = re.sub(r"(浏览器|软件|程序|应用)$", "", app_name_raw).strip()
+
+        # 先搜系统软件（桌面/开始菜单），精确匹配优先
+        if app_name_raw:
+            found = _find_and_launch_app(app_name_raw, log_fn)
+            if found:
+                return found
+
+        # 系统没找到，再查 tools.json
         tools = load_tools_list()
         tool = match_tool(text, tools)
         if tool:
@@ -538,14 +548,6 @@ def execute_command(text, log_fn, stream_fn):
                 log_fn(f"启动工具：{tool['name']}")
                 launch_tool(tool)
                 return f"好的，正在启动「{tool['name']}」"
-
-        # tools.json 没找到，搜索系统已安装软件
-        app_name = re.sub(r"(打开|启动|运行|开启|帮我打开|帮我启动)", "", text).strip()
-        app_name = re.sub(r"(浏览器|软件|程序|应用)", "", app_name).strip()
-        if app_name:
-            found = _find_and_launch_app(app_name, log_fn)
-            if found:
-                return found
 
     write_triggers = ["写","生成","帮我写","写一篇","写一个","创作","起草","新建","创建","建一个","建一份"]
     if any(w in text for w in write_triggers):
@@ -847,108 +849,87 @@ class VoiceAssistant(tk.Tk):
             threading.Thread(target=self._wake_loop, daemon=True).start()
 
     def _wake_loop(self):
-        """持续监听唤醒词，VAD自动检测说话结束，高灵敏度版"""
-        import whisper, numpy as np
-        import sounddevice as sd
+        """
+        唤醒词监听：用 Windows System.Speech 循环识别，准确率高。
+        识别到「小K」相关词汇立即唤醒。
+        """
+        import subprocess, tempfile, os
 
-        if not hasattr(record_and_recognize, "_model"):
-            record_and_recognize._model = whisper.load_model("base")
-        model = record_and_recognize._model
+        # PowerShell 脚本：循环识别，每次最多等3秒，识别到内容立即返回
+        ps_script = r"""
+Add-Type -AssemblyName System.Speech
+$info = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers() | Where-Object { $_.Culture.Name -eq 'zh-CN' } | Select-Object -First 1
+if ($info -ne $null) {
+    $engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine($info)
+} else {
+    $engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine
+}
+$engine.SetInputToDefaultAudioDevice()
+$grammar = New-Object System.Speech.Recognition.DictationGrammar
+$engine.LoadGrammar($grammar)
+$timeout = [System.TimeSpan]::FromSeconds(3)
+while ($true) {
+    $result = $engine.Recognize($timeout)
+    if ($result -ne $null -and $result.Text -ne "") {
+        Write-Output $result.Text
+        [Console]::Out.Flush()
+    }
+}
+"""
+        tmp_ps = os.path.join(SCRIPT_DIR, "_wake_listener.ps1")
+        with open(tmp_ps, "w", encoding="utf-8") as f:
+            f.write(ps_script)
 
-        device_info = sd.query_devices(kind="input")
-        native_rate = int(device_info["default_samplerate"])
-        chunk = int(native_rate * 0.08)  # 80ms 一块，响应更快
+        proc = subprocess.Popen(
+            ["powershell", "-ExecutionPolicy", "Bypass", "-File", tmp_ps],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            creationflags=0x08000000  # 无窗口
+        )
 
-        # 启动时校准一次底噪，之后持续监听不再重新校准
-        calib = sd.rec(int(0.4 * native_rate), samplerate=native_rate,
-                       channels=1, dtype="int16")
-        sd.wait()
-        noise = np.abs(calib.flatten()).mean()
-        # 阈值 = 底噪 * 1.8，最低值 = 2（极低灵敏度麦克风也能触发）
-        threshold = max(noise * 1.8, 2)
-
-        frames = []
-        silent_chunks = 0
-        speaking = False
-
-        with sd.InputStream(samplerate=native_rate, channels=1,
-                            dtype="int16") as stream:
+        try:
             while self.wake_mode:
-                try:
-                    data, _ = stream.read(chunk)
-                    data = data.flatten()
-                    energy = np.abs(data).mean()
+                line = proc.stdout.readline()
+                if not line:
+                    continue
+                for enc in ("gbk", "utf-8", "utf-16"):
+                    try:
+                        text = line.decode(enc).strip()
+                        break
+                    except Exception:
+                        text = ""
+                if not text:
+                    continue
 
-                    if energy > threshold:
-                        speaking = True
-                        silent_chunks = 0
-                        frames.append(data)
-                    elif speaking:
-                        frames.append(data)
-                        silent_chunks += 1
-                        if silent_chunks >= 10:  # 静音0.8秒，说完了
-                            # ── 处理这段音频 ──
-                            audio_np = np.concatenate(frames)
-                            frames = []
-                            silent_chunks = 0
-                            speaking = False
+                # 纠错
+                for w, r in [
+                    ("小可","小K"), ("小客","小K"), ("小卡","小K"),
+                    ("小黑","小K"), ("小凯","小K"), ("小开","小K"),
+                    ("小克","小K"), ("晓K","小K"), ("晓k","小K"),
+                    ("肖K","小K"), ("肖k","小K"), ("小key","小K"),
+                    ("小壳","小K"), ("小科","小K"), ("小棵","小K"),
+                    ("小鬼","小K"), ("小哥","小K"),
+                ]:
+                    text = text.replace(w, r)
 
-                            if not self.wake_mode:
-                                break
+                # 调试日志
+                self.after(0, lambda t=text: self._append("system", f"🔍 听到：{t}"))
 
-                            # 重采样到16000
-                            from scipy.signal import resample as sp_resample
-                            target_len = int(len(audio_np) * 16000 / native_rate)
-                            audio_np = sp_resample(audio_np, max(target_len, 1)).astype(np.int16)
-                            audio_np = _amplify(audio_np, target_peak=20000)
+                if not _is_wake_word(text):
+                    continue
 
-                            arr = audio_np.flatten().astype(np.float32) / 32768.0
-                            # 峰值太低说明是噪音，跳过
-                            if len(arr) < 800 or np.abs(arr).max() < 0.03:
-                                continue
-
-                            try:
-                                result = model.transcribe(
-                                    arr, language="zh", fp16=False,
-                                    no_speech_threshold=0.3,   # 更宽松，短词也能识别
-                                    logprob_threshold=-2.0,    # 更宽松
-                                    condition_on_previous_text=False,
-                                    temperature=0,             # 确定性输出
-                                )
-                                text = result["text"].strip()
-                            except Exception:
-                                continue
-
-                            if not text:
-                                continue
-
-                            # 唤醒词纠错（Whisper常见误识别）
-                            for w, r in [
-                                ("小可","小K"), ("小客","小K"), ("小卡","小K"),
-                                ("小黑","小K"), ("小凯","小K"), ("小开","小K"),
-                                ("小克","小K"), ("晓K","小K"), ("晓k","小K"),
-                                ("肖K","小K"), ("肖k","小K"), ("小key","小K"),
-                                ("小壳","小K"), ("小科","小K"), ("小棵","小K"),
-                            ]:
-                                text = text.replace(w, r)
-
-                            if not _is_wake_word(text):
-                                continue
-
-                            # 检测到唤醒词，中断当前任务
-                            self._task_stop.set()
-                            cmd = _extract_command_after_wake(text)
-                            if cmd:
-                                self.after(0, lambda c=cmd: self._on_wake_with_cmd(c))
-                            else:
-                                self.after(0, self._on_wake)
-                    else:
-                        # 没在说话，重置帧缓冲（防止积累噪音）
-                        if len(frames) > 0:
-                            frames = []
-
-                except Exception:
-                    pass
+                # 唤醒
+                self._task_stop.set()
+                cmd = _extract_command_after_wake(text)
+                if cmd:
+                    self.after(0, lambda c=cmd: self._on_wake_with_cmd(c))
+                else:
+                    self.after(0, self._on_wake)
+        finally:
+            try:
+                proc.terminate()
+                os.unlink(tmp_ps)
+            except Exception:
+                pass
 
     def _trigger_winh_input(self):
         """

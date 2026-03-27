@@ -1,5 +1,12 @@
 [
   {
+    "name": "网页视频下载器",
+    "path": "video_downloader.py",
+    "desc": "下载B站/YouTube/Twitter等网站视频，支持画质选择",
+    "url": "https://gitee.com/procedure-haoyuan/my-tools/raw/main/video_downloader.py",
+    "url_backup": "https://raw.githubusercontent.com/Program-master-leader/my-tools/main/video_downloader.py"
+  },
+  {
     "name": "小K家庭电话",
     "path": "phone_server.py",
     "desc": "局域网家庭语音通话，浏览器打开即用，无需安装软件",

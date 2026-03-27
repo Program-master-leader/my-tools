@@ -91,6 +91,80 @@ class VideoDownloader(tk.Tk):
                   cursor="hand2", font=("微软雅黑",10),
                   command=self._pick_dir).pack(side="left")
 
+        # ── 高级设置（折叠面板）──────────────────────
+        adv_toggle = tk.Frame(self, bg=BG)
+        adv_toggle.pack(fill="x", padx=16, pady=(2,0))
+        self._adv_open = tk.BooleanVar(value=False)
+        self._adv_btn = tk.Button(adv_toggle, text="▶ 高级设置",
+                                   bg=BG, fg=TEXT_DIM, relief="flat",
+                                   font=("微软雅黑",9), cursor="hand2",
+                                   command=self._toggle_adv)
+        self._adv_btn.pack(side="left")
+
+        self._adv_frame = tk.Frame(self, bg=BG2, padx=12, pady=8)
+        # 不 pack，折叠时隐藏
+
+        # 第一行：UA + 限速
+        r1 = tk.Frame(self._adv_frame, bg=BG2); r1.pack(fill="x", pady=2)
+        tk.Label(r1, text="User-Agent：", bg=BG2, fg=TEXT,
+                 font=("微软雅黑",9), width=12, anchor="w").pack(side="left")
+        self.ua_var = tk.StringVar(value="random")
+        ua_opts = ["random", "Chrome/Windows", "Firefox/Windows",
+                   "Safari/Mac", "Chrome/Android", "自定义"]
+        self._ua_combo = ttk.Combobox(r1, textvariable=self.ua_var,
+                                       values=ua_opts, width=18, state="readonly")
+        self._ua_combo.pack(side="left", padx=4)
+        self._ua_combo.bind("<<ComboboxSelected>>", self._on_ua_change)
+
+        tk.Label(r1, text="限速：", bg=BG2, fg=TEXT,
+                 font=("微软雅黑",9)).pack(side="left", padx=(16,4))
+        self.speed_var = tk.StringVar(value="不限速")
+        ttk.Combobox(r1, textvariable=self.speed_var,
+                     values=["不限速","500K","1M","2M","5M"],
+                     width=8, state="readonly").pack(side="left")
+
+        tk.Label(r1, text="重试次数：", bg=BG2, fg=TEXT,
+                 font=("微软雅黑",9)).pack(side="left", padx=(16,4))
+        self.retry_var = tk.StringVar(value="3")
+        ttk.Combobox(r1, textvariable=self.retry_var,
+                     values=["1","3","5","10"],
+                     width=4, state="readonly").pack(side="left")
+
+        # 自定义UA输入框（默认隐藏）
+        self._custom_ua_frame = tk.Frame(self._adv_frame, bg=BG2)
+        tk.Label(self._custom_ua_frame, text="自定义UA：", bg=BG2, fg=TEXT,
+                 font=("微软雅黑",9), width=12, anchor="w").pack(side="left")
+        self.custom_ua_var = tk.StringVar()
+        tk.Entry(self._custom_ua_frame, textvariable=self.custom_ua_var,
+                 bg=BG3, fg=TEXT, insertbackground=TEXT, relief="flat",
+                 font=("微软雅黑",9), width=60).pack(side="left", fill="x", expand=True)
+
+        # 第二行：代理
+        r2 = tk.Frame(self._adv_frame, bg=BG2); r2.pack(fill="x", pady=2)
+        tk.Label(r2, text="代理地址：", bg=BG2, fg=TEXT,
+                 font=("微软雅黑",9), width=12, anchor="w").pack(side="left")
+        self.proxy_var = tk.StringVar(placeholder="留空不使用代理，如：http://127.0.0.1:7890")
+        self.proxy_var = tk.StringVar()
+        tk.Entry(r2, textvariable=self.proxy_var, bg=BG3, fg=TEXT,
+                 insertbackground=TEXT, relief="flat", font=("微软雅黑",9), width=36
+                 ).pack(side="left", padx=4)
+        tk.Label(r2, text="（如：http://127.0.0.1:7890）", bg=BG2, fg=TEXT_DIM,
+                 font=("微软雅黑",8)).pack(side="left")
+
+        # 第三行：Cookie
+        r3 = tk.Frame(self._adv_frame, bg=BG2); r3.pack(fill="x", pady=2)
+        tk.Label(r3, text="Cookie文件：", bg=BG2, fg=TEXT,
+                 font=("微软雅黑",9), width=12, anchor="w").pack(side="left")
+        self.cookie_var = tk.StringVar()
+        tk.Entry(r3, textvariable=self.cookie_var, bg=BG3, fg=TEXT,
+                 insertbackground=TEXT, relief="flat", font=("微软雅黑",9), width=36
+                 ).pack(side="left", padx=4)
+        tk.Button(r3, text="📁 选择", bg=BG3, fg=TEXT, relief="flat",
+                  font=("微软雅黑",9), cursor="hand2",
+                  command=self._pick_cookie).pack(side="left", padx=2)
+        tk.Label(r3, text="（用于下载需登录的内容，如B站大会员）",
+                 bg=BG2, fg=TEXT_DIM, font=("微软雅黑",8)).pack(side="left")
+
         # 下载按钮
         btn_frame = tk.Frame(self, bg=BG, pady=8)
         btn_frame.pack(fill="x", padx=16)
@@ -146,6 +220,44 @@ class VideoDownloader(tk.Tk):
         if d:
             self.save_var.set(d)
 
+    def _pick_cookie(self):
+        f = filedialog.askopenfilename(
+            title="选择Cookie文件",
+            filetypes=[("Cookie文件","*.txt *.json"),("所有文件","*.*")])
+        if f:
+            self.cookie_var.set(f)
+
+    def _toggle_adv(self):
+        if self._adv_open.get():
+            self._adv_frame.pack_forget()
+            self._adv_open.set(False)
+            self._adv_btn.config(text="▶ 高级设置")
+        else:
+            self._adv_frame.pack(fill="x", padx=16, pady=2, before=self.progress)
+            self._adv_open.set(True)
+            self._adv_btn.config(text="▼ 高级设置")
+
+    def _on_ua_change(self, event=None):
+        if self.ua_var.get() == "自定义":
+            self._custom_ua_frame.pack(fill="x", pady=2)
+        else:
+            self._custom_ua_frame.pack_forget()
+
+    def _get_ua(self):
+        import random
+        ua_map = {
+            "Chrome/Windows": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Firefox/Windows": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+            "Safari/Mac": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+            "Chrome/Android": "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+        }
+        sel = self.ua_var.get()
+        if sel == "random":
+            return random.choice(list(ua_map.values()))
+        if sel == "自定义":
+            return self.custom_ua_var.get().strip() or ua_map["Chrome/Windows"]
+        return ua_map.get(sel, ua_map["Chrome/Windows"])
+
     def _open_dir(self):
         d = self.save_var.get()
         os.makedirs(d, exist_ok=True)
@@ -181,7 +293,10 @@ class VideoDownloader(tk.Tk):
         def do():
             try:
                 import yt_dlp
-                with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+                with yt_dlp.YoutubeDL({
+                    "quiet": True,
+                    "http_headers": {"User-Agent": self._get_ua()},
+                }) as ydl:
                     info = ydl.extract_info(url, download=False)
                 title    = info.get("title", "未知")
                 uploader = info.get("uploader", "未知")
@@ -242,7 +357,26 @@ class VideoDownloader(tk.Tk):
                     "quiet": True,
                     "no_warnings": True,
                     "merge_output_format": "mp4",
+                    # 防封IP优化
+                    "http_headers": {"User-Agent": self._get_ua()},
+                    "retries": int(self.retry_var.get()),
+                    "fragment_retries": int(self.retry_var.get()),
+                    "sleep_interval": 1,        # 请求间隔1秒
+                    "max_sleep_interval": 3,    # 最多随机等3秒
+                    "sleep_interval_requests": 1,
                 }
+                # 限速
+                speed = self.speed_var.get()
+                if speed != "不限速":
+                    opts["ratelimit"] = speed
+                # 代理
+                proxy = self.proxy_var.get().strip()
+                if proxy:
+                    opts["proxy"] = proxy
+                # Cookie
+                cookie = self.cookie_var.get().strip()
+                if cookie and os.path.exists(cookie):
+                    opts["cookiefile"] = cookie
                 if is_audio:
                     opts["postprocessors"] = [{
                         "key": "FFmpegExtractAudio",

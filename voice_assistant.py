@@ -399,6 +399,7 @@ def _find_and_launch_app(app_name, log_fn):
         if key in name_lower or any(a in name_lower for a in aliases):
             search_terms.extend(aliases)
 
+    # 搜索路径：桌面优先，然后开始菜单，最后 Program Files
     def _score(fname):
         s = 0
         for term in search_terms:
@@ -409,7 +410,21 @@ def _find_and_launch_app(app_name, log_fn):
 
     candidates = []  # (score, path)
 
-    # 第一优先：开始菜单（递归，速度快）
+    # 第一优先：桌面（用户桌面 + 公共桌面）
+    for desktop in [
+        os.path.expandvars(r"%USERPROFILE%\Desktop"),
+        r"C:\Users\Public\Desktop",
+    ]:
+        if not os.path.exists(desktop):
+            continue
+        for fpath in glob.glob(os.path.join(desktop, "*.lnk")) + \
+                     glob.glob(os.path.join(desktop, "*.exe")):
+            fname = os.path.splitext(os.path.basename(fpath))[0].lower()
+            s = _score(fname)
+            if s > 0:
+                candidates.append((s + 3, fpath))  # 桌面加权+3
+
+    # 第二优先：开始菜单（递归，速度快）
     for menu_dir in [
         os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu"),
         os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu"),
@@ -532,8 +547,28 @@ def execute_command(text, log_fn, stream_fn):
             if found:
                 return found
 
-    write_triggers = ["写","生成","帮我写","写一篇","写一个","创作","起草"]
+    write_triggers = ["写","生成","帮我写","写一篇","写一个","创作","起草","新建","创建","建一个","建一份"]
     if any(w in text for w in write_triggers):
+        fmt = parse_format(text); save_dir = parse_save_path(text); fname = parse_filename(text)
+        # 「新建空文档」不需要AI生成，直接创建空文件
+        is_new_empty = any(w in text for w in ["新建","创建","建一个","建一份"]) and \
+                       not any(w in text for w in ["写","生成","帮我写","创作","起草"])
+        if is_new_empty:
+            if not fname:
+                fname = "新建文档"
+            os.makedirs(save_dir, exist_ok=True)
+            ext_map = {"docx":".docx","pdf":".pdf","txt":".txt"}
+            full_path = os.path.join(save_dir, fname + ext_map.get(fmt, ".docx" if "word" in text.lower() or "文档" in text else ".txt"))
+            try:
+                if full_path.endswith(".docx"):
+                    from docx import Document
+                    Document().save(full_path)
+                else:
+                    open(full_path, "w", encoding="utf-8").close()
+                subprocess.Popen(f'start "" "{full_path}"', shell=True)
+                return f"已新建并打开：{full_path}"
+            except Exception as e:
+                return f"新建失败：{e}"
         fmt = parse_format(text); save_dir = parse_save_path(text); fname = parse_filename(text)
         clean = re.sub(r"保存(到|在|为)[^\s，。]+","",text)
         clean = re.sub(r"(命名为|文件名|叫做?|取名)[^\s，。]+","",clean)

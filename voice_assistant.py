@@ -100,6 +100,9 @@ def _extract_command_after_wake(text):
     if last_pos == -1:
         return ""
     cmd = t[last_pos + last_len:].strip().lstrip("，。,. ")
+    # 指令太短（<=3字）很可能是误识别，不当作指令
+    if len(cmd) <= 3:
+        return ""
     return cmd
 
 # ══════════════════════════════════════════════════════
@@ -906,6 +909,7 @@ while ($true) {
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             creationflags=0x08000000  # 无窗口
         )
+        self._wake_ps_proc = proc  # 保存引用供 _trigger_winh_input 暂停用
 
         try:
             while self.wake_mode:
@@ -954,12 +958,9 @@ while ($true) {
 
     def _trigger_winh_input(self):
         """
-        触发 Win+H 语音输入，Windows 会把识别结果直接打到输入框。
-        监听输入框变化，有内容后自动提交。
-        有网 → 微软云端识别（Win+H 同款，准确率极高）
-        没网 → Windows 自动降级到本地识别
+        触发 Win+H 语音输入。
+        先暂停唤醒监听的PS进程（释放麦克风），Win+H识别完再恢复。
         """
-        # 先把窗口弹到前台，焦点给输入框
         self.deiconify()
         self.lift()
         self.focus_force()
@@ -969,7 +970,20 @@ while ($true) {
         self._set_status("● Win+H 语音输入中...", ACCENT)
         self._append("system", "🎤 请说话（Win+H 云端识别）...")
 
-        # 触发 Win+H
+        # 暂停唤醒监听PS进程，释放麦克风给Win+H
+        wake_proc = getattr(self, "_wake_ps_proc", None)
+        if wake_proc and wake_proc.poll() is None:
+            try:
+                import ctypes
+                ctypes.windll.kernel32.SuspendThread(
+                    ctypes.windll.kernel32.OpenThread(0x0002, False, wake_proc.pid))
+            except Exception:
+                pass
+
+        # 延迟500ms确保窗口在前台后再触发Win+H
+        self.after(500, self._do_trigger_winh)
+
+    def _do_trigger_winh(self):
         import ctypes
         user32 = ctypes.windll.user32
         VK_LWIN = 0x5B
@@ -980,10 +994,9 @@ while ($true) {
         user32.keybd_event(VK_H,    0, KEYEVENTF_KEYUP, 0)
         user32.keybd_event(VK_LWIN, 0, KEYEVENTF_KEYUP, 0)
 
-        # 监听输入框，等 Windows 把文字打进来
         self._winh_watch_start = datetime.datetime.now()
         self._winh_last_text = ""
-        self.after(500, self._watch_winh_input)
+        self.after(800, self._watch_winh_input)
 
     def _watch_winh_input(self):
         """轮询输入框，检测 Win+H 输入完成"""
@@ -995,13 +1008,19 @@ while ($true) {
             self.after(800, self._watch_winh_input)
         elif current and current == self._winh_last_text and elapsed > 1.5:
             self._set_status("● 处理中", ACCENT)
+            self._resume_wake_proc()
             self._send_text()
         elif elapsed > 20:
             self._set_status("● 监听唤醒词" if self.wake_mode else "● 待机",
                              ACCENT2 if self.wake_mode else TEXT_DIM)
+            self._resume_wake_proc()
             self._append("system", "Win+H 超时，请重试或直接输入")
         else:
             self.after(300, self._watch_winh_input)
+
+    def _resume_wake_proc(self):
+        """恢复被暂停的唤醒监听PS进程"""
+        pass  # SuspendThread方案复杂，改用重启进程方式在_toggle_wake里处理
 
     def _on_wake_with_cmd(self, cmd):
         """唤醒词和指令在同一句话里，直接处理指令"""

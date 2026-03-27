@@ -59,7 +59,8 @@ def launch_tool(tool):
     elif ext == ".exe":
         subprocess.Popen(f'"{path}"', shell=True)
     elif ext in (".bat", ".cmd"):
-        subprocess.Popen(f'start cmd /k "{path}"', shell=True)
+        # 用 list 方式避免括号/空格解析问题
+        subprocess.Popen(["cmd", "/c", "start", "cmd", "/k", f'call "{path}"'], shell=False)
     else:
         subprocess.Popen(f'start "" "{path}"', shell=True)
 
@@ -454,7 +455,9 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                     if ext == ".py":
                         subprocess.Popen(f'start cmd /k python "{lp}"', shell=True)
                     elif ext in (".bat", ".cmd"):
-                        subprocess.Popen(f'start cmd /k "{lp}"', shell=True)
+                        # 用 cmd /c call 避免括号解析问题
+                        subprocess.Popen(
+                            f'start cmd /k "call \\"{lp}\\""', shell=True)
                     elif ext == ".exe":
                         subprocess.Popen(f'"{lp}"', shell=True)
                     elif os.path.isdir(lp):

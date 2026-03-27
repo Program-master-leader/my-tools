@@ -87,7 +87,7 @@
     "name": "KHY-Quant 量化交易系统",
     "path": "D:\\pdf小工具\\KHY-Quant-纯净版",
     "desc": "量化交易毕业设计，含前后端+AI引擎",
-    "launch": "D:\\pdf小工具\\KHY-Quant-纯净版\\启动.bat",
+    "launch": "D:\\pdf小工具\\KHY-Quant-纯净版\\1-启动系统(npm开发模式).bat",
     "launch_app": "D:\\pdf小工具\\KHY-Quant-纯净版\\app\\KHY-Quant量化交易系统.exe",
     "url": "",
     "url_backup": ""

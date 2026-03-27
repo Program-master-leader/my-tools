@@ -5,6 +5,7 @@ import os
 import sys
 import json
 import subprocess
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 
@@ -16,6 +17,10 @@ except ImportError:
     _DND_OK = False
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# PyInstaller 打包后用 exe 所在目录作为工作目录
+if getattr(sys, "frozen", False):
+    SCRIPT_DIR = os.path.dirname(sys.executable)
+
 TOOLS_JSON = os.path.join(SCRIPT_DIR, "tools.json")
 
 def resolve_path(path):

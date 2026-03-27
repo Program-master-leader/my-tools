@@ -1,12 +1,16 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 a = Analysis(
-    ['D:\\pdf小工具\\KHY的小工具.py'],
+    ['gui_center.py'],
     pathex=[],
     binaries=[],
-    datas=[],
-    hiddenimports=[],
+    datas=[
+        ('tools.json', '.'),
+    ],
+    hiddenimports=['tkinter', 'tkinter.ttk', 'tkinter.messagebox',
+                   'tkinter.simpledialog', 'tkinter.filedialog',
+                   'winreg', 'json', 'subprocess', 'threading',
+                   'urllib.request', 'webbrowser'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -29,7 +33,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,
+    console=False,       # 无黑框
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

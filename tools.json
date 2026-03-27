@@ -1,5 +1,12 @@
 [
   {
+    "name": "小K家庭电话",
+    "path": "phone_server.py",
+    "desc": "局域网家庭语音通话，浏览器打开即用，无需安装软件",
+    "url": "",
+    "url_backup": ""
+  },
+  {
     "name": "小K语音助手",
     "path": "voice_assistant.py",
     "desc": "语音控制电脑，写文章/关机/重启/查时间，唤醒词「小K」",

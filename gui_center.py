@@ -661,26 +661,62 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         cfg_frame.pack(fill="x", padx=16, pady=4)
 
         self._git_cfg = {}
-        for label, key, show, link in [
+        self._git_status_labels = {}  # 存每行的状态灯
+        for label, key, show, link, verify_fn in [
             ("GitHub Token", "github_token", "*",
-             "https://github.com/settings/tokens/new"),
+             "https://github.com/settings/tokens/new",
+             lambda v, k="github_token": self._verify_github(v, k)),
             ("Gitee  Token", "gitee_token",  "*",
-             "https://gitee.com/profile/personal_access_tokens/new"),
+             "https://gitee.com/profile/personal_access_tokens/new",
+             lambda v, k="gitee_token": self._verify_gitee(v, k)),
             ("GitLab Token", "gitlab_token", "*",
-             "https://gitlab.com/-/profile/personal_access_tokens"),
-            ("GitLab 地址",  "gitlab_url",   "",  "https://gitlab.com"),
+             "https://gitlab.com/-/profile/personal_access_tokens",
+             lambda v, k="gitlab_token": self._verify_gitlab(v, k)),
+            ("GitLab 地址",  "gitlab_url",   "",
+             "https://gitlab.com", None),
         ]:
             row = tk.Frame(cfg_frame, bg=BG); row.pack(fill="x", pady=2)
             tk.Label(row, text=label, bg=BG, fg=TEXT,
                      font=("微软雅黑",9), width=14, anchor="w").pack(side="left")
             v = tk.StringVar()
             self._git_cfg[key] = v
-            tk.Entry(row, textvariable=v, bg=BG2, fg=TEXT, insertbackground=TEXT,
-                     relief="flat", font=("微软雅黑",9), show=show, width=40).pack(side="left", padx=6)
-            # 点击跳转获取 Token 的链接
+            entry = tk.Entry(row, textvariable=v, bg=BG2, fg=TEXT,
+                             insertbackground=TEXT, relief="flat",
+                             font=("微软雅黑",9), show=show, width=32)
+            entry.pack(side="left", padx=6)
+
+            # 状态指示灯
+            status_lbl = tk.Label(row, text="⬤", bg=BG, fg=TEXT_DIM,
+                                   font=("微软雅黑",10))
+            status_lbl.pack(side="left", padx=2)
+            if key != "gitlab_url":
+                self._git_status_labels[key] = status_lbl
+
+            # 👁 显示/隐藏
+            if show == "*":
+                eye_btn = tk.Button(row, text="👁", bg=BG, fg=TEXT_DIM,
+                                    relief="flat", font=("微软雅黑",9),
+                                    cursor="hand2", padx=2)
+                eye_btn.pack(side="left")
+                def _toggle_show(e=entry, b=eye_btn):
+                    if e.cget("show") == "*":
+                        e.config(show=""); b.config(fg=ACCENT)
+                    else:
+                        e.config(show="*"); b.config(fg=TEXT_DIM)
+                eye_btn.config(command=_toggle_show)
+
+            # ✓ 验证
+            if verify_fn:
+                tk.Button(row, text="✓ 验证", bg=BG3, fg=ACCENT2,
+                          relief="flat", font=("微软雅黑",9), padx=6,
+                          cursor="hand2",
+                          command=lambda fn=verify_fn, var=v: fn(var.get().strip())
+                          ).pack(side="left", padx=2)
+
+            # 🔗 获取
             lbl = tk.Label(row, text="🔗 获取", bg=BG, fg=ACCENT,
                            font=("微软雅黑",9,"underline"), cursor="hand2")
-            lbl.pack(side="left", padx=2)
+            lbl.pack(side="left", padx=4)
             lbl.bind("<Button-1>", lambda e, url=link: __import__("webbrowser").open(url))
 
         btn_row = tk.Frame(cfg_frame, bg=BG); btn_row.pack(anchor="w", pady=4)
@@ -749,6 +785,70 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         self._git_log.insert("end", msg + "\n")
         self._git_log.see("end")
         self._git_log.config(state="disabled")
+
+    def _set_git_status(self, key, ok):
+        lbl = self._git_status_labels.get(key)
+        if lbl:
+            lbl.config(fg=ACCENT2 if ok else DANGER)
+
+    def _verify_github(self, token, key="github_token"):
+        if not token:
+            messagebox.showwarning("提示", "请先输入 GitHub Token"); return
+        import urllib.request, urllib.error
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/user",
+                headers={"Authorization": f"token {token}", "User-Agent": "KHY-Tools"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read())
+            self._set_git_status(key, True)
+            messagebox.showinfo("✓ GitHub 验证成功",
+                f"用户名：{data.get('login')}\n邮箱：{data.get('email') or '未公开'}\n仓库数：{data.get('public_repos')}")
+        except urllib.error.HTTPError as e:
+            self._set_git_status(key, False)
+            messagebox.showerror("✗ 验证失败", f"HTTP {e.code}：Token 无效或权限不足")
+        except Exception as e:
+            self._set_git_status(key, False)
+            messagebox.showerror("✗ 验证失败", f"网络错误：{e}")
+
+    def _verify_gitee(self, token, key="gitee_token"):
+        if not token:
+            messagebox.showwarning("提示", "请先输入 Gitee Token"); return
+        import urllib.request, urllib.error
+        try:
+            with urllib.request.urlopen(
+                    f"https://gitee.com/api/v5/user?access_token={token}", timeout=8) as r:
+                data = json.loads(r.read())
+            self._set_git_status(key, True)
+            messagebox.showinfo("✓ Gitee 验证成功",
+                f"用户名：{data.get('login')}\n昵称：{data.get('name')}\n邮箱：{data.get('email') or '未公开'}")
+        except urllib.error.HTTPError as e:
+            self._set_git_status(key, False)
+            messagebox.showerror("✗ 验证失败", f"HTTP {e.code}：Token 无效或已过期")
+        except Exception as e:
+            self._set_git_status(key, False)
+            messagebox.showerror("✗ 验证失败", f"网络错误：{e}")
+
+    def _verify_gitlab(self, token, key="gitlab_token"):
+        if not token:
+            messagebox.showwarning("提示", "请先输入 GitLab Token"); return
+        base = self._git_cfg.get("gitlab_url", tk.StringVar()).get().strip() or "https://gitlab.com"
+        import urllib.request, urllib.error
+        try:
+            req = urllib.request.Request(
+                f"{base.rstrip('/')}/api/v4/user",
+                headers={"PRIVATE-TOKEN": token})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read())
+            self._set_git_status(key, True)
+            messagebox.showinfo("✓ GitLab 验证成功",
+                f"用户名：{data.get('username')}\n昵称：{data.get('name')}\n邮箱：{data.get('email') or '未公开'}")
+        except urllib.error.HTTPError as e:
+            self._set_git_status(key, False)
+            messagebox.showerror("✗ 验证失败", f"HTTP {e.code}：Token 无效或地址错误")
+        except Exception as e:
+            self._set_git_status(key, False)
+            messagebox.showerror("✗ 验证失败", f"网络错误：{e}")
 
     def _save_git_cfg(self):
         cfg = {k: v.get().strip() for k, v in self._git_cfg.items()}

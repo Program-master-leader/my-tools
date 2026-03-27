@@ -17,11 +17,26 @@ except ImportError:
     _DND_OK = False
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# PyInstaller 打包后用 exe 所在目录作为工作目录
 if getattr(sys, "frozen", False):
     SCRIPT_DIR = os.path.dirname(sys.executable)
 
+# tools.json 路径：优先读 exe 同目录（用户自定义），没有则读打包内置的
 TOOLS_JSON = os.path.join(SCRIPT_DIR, "tools.json")
+_BUILTIN_TOOLS_JSON = os.path.join(
+    getattr(sys, "_MEIPASS", SCRIPT_DIR), "tools.json")
+
+def load_tools():
+    # 优先用户目录（有用户自定义工具），否则用内置
+    src = TOOLS_JSON if os.path.exists(TOOLS_JSON) else _BUILTIN_TOOLS_JSON
+    if os.path.exists(src):
+        with open(src, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def save_tools(tools):
+    # 保存到 exe 同目录（不污染打包内部）
+    with open(TOOLS_JSON, "w", encoding="utf-8") as f:
+        json.dump(tools, f, ensure_ascii=False, indent=2)
 
 def resolve_path(path):
     """相对路径转绝对路径"""
@@ -40,16 +55,6 @@ TEXT     = "#cdd6f4"
 TEXT_DIM = "#6c7086"
 BTN_BG   = "#45475a"
 BTN_HOV  = "#585b70"
-
-def load_tools():
-    if os.path.exists(TOOLS_JSON):
-        with open(TOOLS_JSON, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
-
-def save_tools(tools):
-    with open(TOOLS_JSON, "w", encoding="utf-8") as f:
-        json.dump(tools, f, ensure_ascii=False, indent=2)
 
 def launch_tool(tool):
     path = resolve_path(tool["path"])

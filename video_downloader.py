@@ -26,15 +26,16 @@ class VideoDownloader(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("网页视频下载器")
-        self.geometry("700x560")
+        self.geometry("780x620")
         self.configure(bg=BG)
         self.resizable(True, True)
         self._downloading = False
+        self._playlist_items = []  # [(checked_var, title, url, duration)]
         self._build_ui()
         self._check_deps()
 
     def _build_ui(self):
-        # 标题
+        # 标题栏
         top = tk.Frame(self, bg=BG2, pady=10)
         top.pack(fill="x")
         tk.Label(top, text="🎬  网页视频下载器", bg=BG2, fg=ACCENT,
@@ -43,8 +44,40 @@ class VideoDownloader(tk.Tk):
                                     font=("微软雅黑",10))
         self.status_lbl.pack(side="right", padx=20)
 
+        # Notebook 标签页
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TNotebook", background=BG, borderwidth=0)
+        style.configure("TNotebook.Tab", background=BG3, foreground=TEXT,
+                        font=("微软雅黑",10), padding=[12,6])
+        style.map("TNotebook.Tab", background=[("selected", BG2)],
+                  foreground=[("selected", ACCENT)])
+
+        nb = ttk.Notebook(self)
+        nb.pack(fill="both", expand=True, padx=8, pady=4)
+
+        self._tab_single = tk.Frame(nb, bg=BG)
+        self._tab_batch  = tk.Frame(nb, bg=BG)
+        nb.add(self._tab_single, text="  单视频下载  ")
+        nb.add(self._tab_batch,  text="  批量/播放列表  ")
+
+        self._build_single_tab()
+        self._build_batch_tab()
+
+    # ══════════════════════════════════════════════
+    # 单视频标签页
+    # ══════════════════════════════════════════════
+    def _build_single_tab(self):
+        f = self._tab_single
+
+    # ══════════════════════════════════════════════
+    # 单视频标签页
+    # ══════════════════════════════════════════════
+    def _build_single_tab(self):
+        f = self._tab_single
+
         # URL 输入
-        url_frame = tk.Frame(self, bg=BG, pady=8)
+        url_frame = tk.Frame(f, bg=BG, pady=8)
         url_frame.pack(fill="x", padx=16)
         tk.Label(url_frame, text="视频链接：", bg=BG, fg=TEXT,
                  font=("微软雅黑",10)).pack(anchor="w")
@@ -475,6 +508,245 @@ class VideoDownloader(tk.Tk):
         self.stop_btn.config(state="disabled")
         self._set_status("● 就绪" if success else "● 已停止",
                          ACCENT2 if success else TEXT_DIM)
+
+    # ══════════════════════════════════════════════
+    # 批量/播放列表标签页
+    # ══════════════════════════════════════════════
+    def _build_batch_tab(self):
+        f = self._tab_batch
+
+        # URL 输入
+        top = tk.Frame(f, bg=BG, pady=8); top.pack(fill="x", padx=16)
+        tk.Label(top, text="播放列表 / UP主主页 / 搜索结果页链接：",
+                 bg=BG, fg=TEXT, font=("微软雅黑",10)).pack(anchor="w")
+        row = tk.Frame(top, bg=BG); row.pack(fill="x", pady=4)
+        self.batch_url_var = tk.StringVar()
+        tk.Entry(row, textvariable=self.batch_url_var, bg=BG2, fg=TEXT,
+                 insertbackground=TEXT, relief="flat",
+                 font=("微软雅黑",11)).pack(side="left", fill="x", expand=True,
+                                           ipady=8, padx=(0,8))
+        tk.Button(row, text="粘贴", bg=BG3, fg=TEXT, relief="flat",
+                  font=("微软雅黑",10), padx=10, cursor="hand2",
+                  command=lambda: self.batch_url_var.set(
+                      self.clipboard_get())).pack(side="left", padx=2)
+
+        # 扫描选项
+        opt = tk.Frame(f, bg=BG); opt.pack(fill="x", padx=16, pady=4)
+        tk.Label(opt, text="最多扫描：", bg=BG, fg=TEXT,
+                 font=("微软雅黑",10)).pack(side="left")
+        self.batch_limit_var = tk.StringVar(value="50")
+        ttk.Combobox(opt, textvariable=self.batch_limit_var,
+                     values=["10","20","50","100","全部"],
+                     width=6, state="readonly").pack(side="left", padx=4)
+        tk.Label(opt, text="个视频", bg=BG, fg=TEXT,
+                 font=("微软雅黑",10)).pack(side="left")
+
+        # 扫描按钮
+        btn_row = tk.Frame(f, bg=BG); btn_row.pack(fill="x", padx=16, pady=4)
+        self.scan_btn = tk.Button(btn_row, text="🔍 开始扫描", bg="#89b4fa", fg=BG,
+                                   relief="flat", font=("微软雅黑",11,"bold"),
+                                   padx=20, pady=8, cursor="hand2",
+                                   command=self._scan_playlist)
+        self.scan_btn.pack(side="left", padx=4)
+        tk.Button(btn_row, text="✓ 全选", bg=BG3, fg=TEXT, relief="flat",
+                  font=("微软雅黑",10), padx=12, pady=8, cursor="hand2",
+                  command=self._select_all).pack(side="left", padx=2)
+        tk.Button(btn_row, text="✗ 全不选", bg=BG3, fg=TEXT, relief="flat",
+                  font=("微软雅黑",10), padx=12, pady=8, cursor="hand2",
+                  command=self._deselect_all).pack(side="left", padx=2)
+        self.batch_dl_btn = tk.Button(btn_row, text="⬇ 下载选中", bg=ACCENT2, fg=BG,
+                                       relief="flat", font=("微软雅黑",11,"bold"),
+                                       padx=20, pady=8, cursor="hand2",
+                                       command=self._batch_download, state="disabled")
+        self.batch_dl_btn.pack(side="left", padx=4)
+        self.batch_count_lbl = tk.Label(btn_row, text="", bg=BG, fg=TEXT_DIM,
+                                         font=("微软雅黑",9))
+        self.batch_count_lbl.pack(side="left", padx=8)
+
+        # 视频列表（带复选框）
+        list_frame = tk.Frame(f, bg=BG); list_frame.pack(fill="both", expand=True,
+                                                           padx=16, pady=4)
+        # 列头
+        hdr = tk.Frame(list_frame, bg=BG3); hdr.pack(fill="x")
+        tk.Label(hdr, text="  ✓", bg=BG3, fg=ACCENT, font=("微软雅黑",9,"bold"),
+                 width=3).pack(side="left")
+        tk.Label(hdr, text="标题", bg=BG3, fg=ACCENT, font=("微软雅黑",9,"bold"),
+                 width=40, anchor="w").pack(side="left")
+        tk.Label(hdr, text="时长", bg=BG3, fg=ACCENT, font=("微软雅黑",9,"bold"),
+                 width=8).pack(side="left")
+        tk.Label(hdr, text="状态", bg=BG3, fg=ACCENT, font=("微软雅黑",9,"bold"),
+                 width=8).pack(side="left")
+
+        # 滚动列表
+        canvas = tk.Canvas(list_frame, bg=BG2, highlightthickness=0)
+        sb = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        self._batch_list_frame = tk.Frame(canvas, bg=BG2)
+        self._batch_canvas_win = canvas.create_window(
+            (0,0), window=self._batch_list_frame, anchor="nw")
+        self._batch_list_frame.bind("<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+            lambda e: canvas.itemconfig(self._batch_canvas_win, width=e.width))
+        canvas.bind_all("<MouseWheel>",
+            lambda e: canvas.yview_scroll(-1*(e.delta//120), "units"))
+
+        # 扫描进度条
+        self.batch_progress = ttk.Progressbar(f, mode="indeterminate")
+        self.batch_progress.pack(fill="x", padx=16, pady=2)
+
+    def _scan_playlist(self):
+        url = self.batch_url_var.get().strip()
+        if not url:
+            return
+        if not _ensure_ytdlp():
+            return
+        # 清空列表
+        for w in self._batch_list_frame.winfo_children():
+            w.destroy()
+        self._playlist_items.clear()
+        self.batch_dl_btn.config(state="disabled")
+        self.batch_count_lbl.config(text="扫描中...")
+        self.scan_btn.config(state="disabled")
+        self.batch_progress.start(10)
+
+        limit_str = self.batch_limit_var.get()
+        limit = None if limit_str == "全部" else int(limit_str)
+
+        def do():
+            try:
+                import yt_dlp
+                opts = {
+                    "quiet": True,
+                    "extract_flat": True,   # 只获取列表，不下载
+                    "http_headers": {"User-Agent": self._get_ua()},
+                }
+                if limit:
+                    opts["playlistend"] = limit
+
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+
+                entries = []
+                if info.get("_type") == "playlist" or info.get("entries"):
+                    entries = list(info.get("entries") or [])
+                else:
+                    # 单个视频
+                    entries = [info]
+
+                self.after(0, lambda: self._render_playlist(entries))
+            except Exception as e:
+                err = str(e)
+                self.after(0, lambda: [
+                    self.batch_count_lbl.config(text=f"扫描失败：{err[:60]}"),
+                    self.scan_btn.config(state="normal"),
+                    self.batch_progress.stop()
+                ])
+
+        threading.Thread(target=do, daemon=True).start()
+
+    def _render_playlist(self, entries):
+        self.batch_progress.stop()
+        self.scan_btn.config(state="normal")
+        self._playlist_items.clear()
+
+        for w in self._batch_list_frame.winfo_children():
+            w.destroy()
+
+        for i, entry in enumerate(entries):
+            if not entry:
+                continue
+            title    = (entry.get("title") or entry.get("id") or f"视频{i+1}")[:50]
+            duration = entry.get("duration") or 0
+            video_url = entry.get("url") or entry.get("webpage_url") or ""
+            mins, secs = divmod(int(duration), 60)
+            dur_str = f"{mins}:{secs:02d}" if duration else "--:--"
+
+            checked = tk.BooleanVar(value=True)
+            status_var = tk.StringVar(value="待下载")
+            self._playlist_items.append((checked, title, video_url, status_var))
+
+            row_bg = BG2 if i % 2 == 0 else BG3
+            row = tk.Frame(self._batch_list_frame, bg=row_bg)
+            row.pack(fill="x", pady=1)
+
+            tk.Checkbutton(row, variable=checked, bg=row_bg,
+                           activebackground=row_bg,
+                           command=self._update_count).pack(side="left", padx=4)
+            tk.Label(row, text=title, bg=row_bg, fg=TEXT,
+                     font=("微软雅黑",9), width=42, anchor="w").pack(side="left")
+            tk.Label(row, text=dur_str, bg=row_bg, fg=TEXT_DIM,
+                     font=("微软雅黑",9), width=8).pack(side="left")
+            tk.Label(row, textvariable=status_var, bg=row_bg, fg=ACCENT2,
+                     font=("微软雅黑",9), width=8).pack(side="left")
+
+        total = len(self._playlist_items)
+        self.batch_count_lbl.config(text=f"共 {total} 个视频，已全选")
+        if total > 0:
+            self.batch_dl_btn.config(state="normal")
+
+    def _update_count(self):
+        selected = sum(1 for v, *_ in self._playlist_items if v.get())
+        total = len(self._playlist_items)
+        self.batch_count_lbl.config(text=f"已选 {selected}/{total} 个")
+
+    def _select_all(self):
+        for v, *_ in self._playlist_items: v.set(True)
+        self._update_count()
+
+    def _deselect_all(self):
+        for v, *_ in self._playlist_items: v.set(False)
+        self._update_count()
+
+    def _batch_download(self):
+        selected = [(t, u, sv) for v, t, u, sv in self._playlist_items if v.get()]
+        if not selected:
+            return
+        save_dir = self.save_var.get().strip() or DEFAULT_SAVE
+        os.makedirs(save_dir, exist_ok=True)
+        self.batch_dl_btn.config(state="disabled")
+        self.batch_progress.start(10)
+        self._set_status(f"● 批量下载 0/{len(selected)}", ACCENT)
+
+        def do():
+            import yt_dlp
+            done = 0
+            for title, url, status_var in selected:
+                if not url:
+                    self.after(0, lambda sv=status_var: sv.set("无链接"))
+                    continue
+                self.after(0, lambda sv=status_var: sv.set("下载中"))
+                try:
+                    opts = {
+                        "format": self._get_format(),
+                        "outtmpl": os.path.join(save_dir, "%(title)s.%(ext)s"),
+                        "quiet": True,
+                        "no_warnings": True,
+                        "merge_output_format": "mp4",
+                        "http_headers": {"User-Agent": self._get_ua()},
+                        "retries": int(self.retry_var.get()),
+                    }
+                    cookie = self.cookie_var.get().strip()
+                    if cookie and os.path.exists(cookie):
+                        opts["cookiefile"] = cookie
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        ydl.download([url])
+                    done += 1
+                    self.after(0, lambda sv=status_var: sv.set("✓ 完成"))
+                    self.after(0, lambda d=done, t=len(selected):
+                               self._set_status(f"● 批量下载 {d}/{t}", ACCENT))
+                except Exception as e:
+                    self.after(0, lambda sv=status_var: sv.set("✗ 失败"))
+            self.after(0, lambda: [
+                self.batch_progress.stop(),
+                self.batch_dl_btn.config(state="normal"),
+                self._set_status(f"● 完成 {done}/{len(selected)}", ACCENT2)
+            ])
+
+        threading.Thread(target=do, daemon=True).start()
+
 
 if __name__ == "__main__":
     VideoDownloader().mainloop()

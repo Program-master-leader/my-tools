@@ -443,30 +443,21 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                 out_base = os.path.join(SCRIPT_DIR, f"_tmp_{safe_name}")
 
                 if z7:
-                    # 7z 分卷压缩，-v90m 每卷90MB
-                    self.after(0, lambda: self._sync_toast(f"正在7z压缩「{tool_name}」..."))
+                    self.after(0, lambda: self._sync_toast(f"正在7z压缩「{tool_name}」（可能需要几分钟）..."))
                     try:
-                        r = subprocess.run(
-                            [z7, "a", "-t7z", "-mx=5", "-ssw",
-                             "-v90m",
-                             f"{out_base}.7z", src_path],
-                            capture_output=True, text=True,
-                            encoding="utf-8", errors="replace",
-                            creationflags=0x08000000)
-                        if r.returncode > 1:
-                            raise Exception(r.stderr[:200] or r.stdout[:200])
-                    except PermissionError as e:
-                        # 权限问题：尝试只压缩可访问的文件
-                        self.after(0, lambda: self._sync_toast(
-                            f"部分文件无权限，跳过后继续压缩..."))
-                        r = subprocess.run(
+                        proc = subprocess.Popen(
                             [z7, "a", "-t7z", "-mx=5", "-ssw", "-v90m",
-                             f"{out_base}.7z", src_path, "-xr!*.exe"],
-                            capture_output=True, text=True,
-                            encoding="utf-8", errors="replace",
+                             f"{out_base}.7z", src_path],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             creationflags=0x08000000)
-                        if r.returncode > 1:
-                            raise Exception(str(e))
+                        stdout, stderr = proc.communicate()  # 等待完成
+                        retcode = proc.returncode
+                        if retcode > 1:
+                            err_msg = (stderr.decode("gbk", errors="replace") or
+                                       stdout.decode("gbk", errors="replace"))[:200]
+                            raise Exception(err_msg)
+                    except PermissionError as e:
+                        raise Exception(f"权限不足，无法压缩：{e}")
                     # 找生成的分卷文件
                     part_files = sorted([
                         os.path.join(SCRIPT_DIR, f)

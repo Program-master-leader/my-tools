@@ -508,6 +508,48 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
 
         threading.Thread(target=do, daemon=True).start()
 
+    def _get_git_status(self, tool):
+        """检查工具文件是否已上传到 Git"""
+        path = tool.get("path","")
+        url  = tool.get("url","")
+        url_bak = tool.get("url_backup","")
+
+        # 有 Git URL 说明已配置上传
+        if url or url_bak:
+            return "☁ 已同步", ACCENT2
+
+        # 检查是否是相对路径（在仓库目录内）
+        if not os.path.isabs(path):
+            abs_path = os.path.join(SCRIPT_DIR, path)
+            # 用 git ls-files 检查是否被追踪
+            git = self._find_git_exe()
+            if git and os.path.exists(abs_path):
+                try:
+                    r = subprocess.run(
+                        [git, "-C", SCRIPT_DIR, "ls-files", "--error-unmatch", path],
+                        capture_output=True, timeout=3)
+                    if r.returncode == 0:
+                        return "☁ 已同步", ACCENT2
+                    else:
+                        return "⚠ 未追踪", "#f9e2af"
+                except Exception:
+                    pass
+
+        # 绝对路径且无 URL，未上传
+        return "— 本地", TEXT_DIM
+
+    def _find_git_exe(self):
+        for g in ["git", r"D:\Program Files\Git\cmd\git.exe",
+                  r"C:\Program Files\Git\cmd\git.exe"]:
+            try:
+                if subprocess.run([g, "--version"], capture_output=True,
+                                  timeout=3, creationflags=0x08000000
+                                  ).returncode == 0:
+                    return g
+            except Exception:
+                pass
+        return None
+
     def _git_sync(self, src_path, tool_name):
         """把新增工具同步到 Git 仓库（优先 Gitee，失败只推 Gitee 也算成功）"""
         import shutil, threading
@@ -601,7 +643,7 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         # 列头
         hdr = tk.Frame(self._list_frame, bg=BG3)
         hdr.pack(fill="x", pady=(0, 1))
-        for txt, w in [("名称",18),("描述",24),("路径",30),("状态",8),("操作",14)]:
+        for txt, w in [("名称",18),("描述",22),("路径",28),("状态",8),("Git",8),("操作",14)]:
             tk.Label(hdr, text=txt, bg=BG3, fg=ACCENT,
                      font=("微软雅黑",9,"bold"), width=w, anchor="w",
                      padx=4).pack(side="left")
@@ -641,12 +683,16 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                      padx=4).pack(side="left")
             # 描述
             tk.Label(row, text=t.get("desc","")[:20], bg=row_bg, fg=TEXT_DIM,
-                     font=("微软雅黑",9), width=24, anchor="w").pack(side="left")
+                     font=("微软雅黑",9), width=22, anchor="w").pack(side="left")
             # 路径
-            tk.Label(row, text=t["path"][:35], bg=row_bg, fg=TEXT_DIM,
-                     font=("微软雅黑",9), width=30, anchor="w").pack(side="left")
+            tk.Label(row, text=t["path"][:33], bg=row_bg, fg=TEXT_DIM,
+                     font=("微软雅黑",9), width=28, anchor="w").pack(side="left")
             # 状态
             tk.Label(row, text=status_txt, bg=row_bg, fg=status_fg,
+                     font=("微软雅黑",9), width=8, anchor="w").pack(side="left")
+            # Git 状态
+            git_txt, git_fg = self._get_git_status(t)
+            tk.Label(row, text=git_txt, bg=row_bg, fg=git_fg,
                      font=("微软雅黑",9), width=8, anchor="w").pack(side="left")
 
             # 操作按钮区

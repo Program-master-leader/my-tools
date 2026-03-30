@@ -112,5 +112,19 @@
     "desc": "docker容器部署x64",
     "url": "",
     "url_backup": ""
+  },
+  {
+    "name": "nirvana",
+    "path": "C:\\Program Files\\nirvana",
+    "desc": "换号器",
+    "url": "",
+    "url_backup": ""
+  },
+  {
+    "name": "Kiro",
+    "path": "D:\\Users\\25789\\AppData\\Local\\Programs\\Kiro",
+    "desc": "AI编程工具",
+    "url": "",
+    "url_backup": ""
   }
 ]

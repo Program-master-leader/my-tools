@@ -443,16 +443,30 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                 out_base = os.path.join(SCRIPT_DIR, f"_tmp_{safe_name}")
 
                 if z7:
-                    # 7z 分卷压缩，-v90m 每卷90MB，-mx=5 中等压缩率（速度/大小平衡）
+                    # 7z 分卷压缩，-v90m 每卷90MB
                     self.after(0, lambda: self._sync_toast(f"正在7z压缩「{tool_name}」..."))
-                    r = subprocess.run(
-                        [z7, "a", "-t7z", "-mx=5", "-ssw",
-                         "-v90m",
-                         f"{out_base}.7z", src_path],
-                        capture_output=True, text=True,
-                        creationflags=0x08000000)  # CREATE_NO_WINDOW
-                    if r.returncode > 1:  # 0=成功 1=警告(有文件跳过) 2+=错误
-                        raise Exception(r.stderr[:200] or r.stdout[:200])
+                    try:
+                        r = subprocess.run(
+                            [z7, "a", "-t7z", "-mx=5", "-ssw",
+                             "-v90m",
+                             f"{out_base}.7z", src_path],
+                            capture_output=True, text=True,
+                            encoding="utf-8", errors="replace",
+                            creationflags=0x08000000)
+                        if r.returncode > 1:
+                            raise Exception(r.stderr[:200] or r.stdout[:200])
+                    except PermissionError as e:
+                        # 权限问题：尝试只压缩可访问的文件
+                        self.after(0, lambda: self._sync_toast(
+                            f"部分文件无权限，跳过后继续压缩..."))
+                        r = subprocess.run(
+                            [z7, "a", "-t7z", "-mx=5", "-ssw", "-v90m",
+                             f"{out_base}.7z", src_path, "-xr!*.exe"],
+                            capture_output=True, text=True,
+                            encoding="utf-8", errors="replace",
+                            creationflags=0x08000000)
+                        if r.returncode > 1:
+                            raise Exception(str(e))
                     # 找生成的分卷文件
                     part_files = sorted([
                         os.path.join(SCRIPT_DIR, f)

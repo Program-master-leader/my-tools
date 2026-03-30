@@ -1143,105 +1143,144 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         self.clean_log.tag_config("err", foreground=DANGER)
 
     def _scan_c_drive(self):
-        """扫描C盘常见可安全清理的目录"""
+        """扫描C盘所有非系统目录，找出可安全清理的项目"""
         self.scan_tree.delete(*self.scan_tree.get_children())
-        self._scan_size_lbl.config(text="扫描中...")
+        self._scan_size_lbl.config(text="扫描中，请稍候...")
         self._scan_btn.config(state="disabled")
 
         def do():
-            import shutil
             results = []  # (type, path, size_bytes, desc)
-
-            scan_targets = [
-                # npm/node 缓存
-                (os.path.expandvars(r"%APPDATA%\npm-cache"),
-                 "npm缓存", "npm install 产生的缓存，可安全删除"),
-                (os.path.expandvars(r"%LOCALAPPDATA%\npm-cache"),
-                 "npm缓存", "npm缓存"),
-                # pip 缓存
-                (os.path.expandvars(r"%LOCALAPPDATA%\pip\cache"),
-                 "pip缓存", "Python pip 下载缓存"),
-                # yarn 缓存
-                (os.path.expandvars(r"%LOCALAPPDATA%\Yarn\Cache"),
-                 "yarn缓存", "yarn 包缓存"),
-                # pnpm 缓存
-                (os.path.expandvars(r"%LOCALAPPDATA%\pnpm\store"),
-                 "pnpm缓存", "pnpm 包存储"),
-                # Windows 临时文件
-                (os.path.expandvars(r"%TEMP%"),
-                 "系统临时", "Windows 临时文件夹"),
-                (r"C:\Windows\Temp",
-                 "系统临时", "Windows 系统临时文件"),
-                # Windows Update 缓存
-                (r"C:\Windows\SoftwareDistribution\Download",
-                 "更新缓存", "Windows Update 下载缓存，可清理"),
-                # 缩略图缓存
-                (os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Windows\Explorer"),
-                 "缩略图缓存", "文件夹缩略图缓存"),
-                # 浏览器缓存
-                (os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Cache"),
-                 "Chrome缓存", "Chrome 浏览器缓存"),
-                (os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Cache"),
-                 "Edge缓存", "Edge 浏览器缓存"),
-                # Python __pycache__（用户目录下）
-                (os.path.expandvars(r"%USERPROFILE%\AppData\Local\pyinstaller"),
-                 "PyInstaller缓存", "PyInstaller 构建缓存"),
-                # Ollama 模型（大文件，仅提示）
-                (os.path.expandvars(r"%USERPROFILE%\.ollama\models"),
-                 "Ollama模型", "本地AI模型文件（删除后需重新下载）"),
-                # node_modules（扫描用户目录下的）
-            ]
-
-            # 额外扫描用户目录下的 node_modules
-            user_dir = os.path.expanduser("~")
-            for root, dirs, _ in os.walk(user_dir):
-                # 跳过太深的目录
-                depth = root.replace(user_dir, "").count(os.sep)
-                if depth > 4:
-                    dirs.clear()
-                    continue
-                if "node_modules" in dirs:
-                    nm_path = os.path.join(root, "node_modules")
-                    scan_targets.append((nm_path, "node_modules",
-                                         "Node.js依赖包，可删除后npm install恢复"))
-                    dirs.remove("node_modules")  # 不递归进去
-
-            for path, type_name, desc in scan_targets:
-                if not os.path.exists(path):
-                    continue
-                try:
-                    size = 0
-                    if os.path.isfile(path):
-                        size = os.path.getsize(path)
-                    else:
-                        for dp, dn, fn in os.walk(path):
-                            for f in fn:
-                                try:
-                                    size += os.path.getsize(os.path.join(dp, f))
-                                except Exception:
-                                    pass
-                    if size > 1024 * 1024:  # 只显示 >1MB 的
-                        results.append((type_name, path, size, desc))
-                except PermissionError:
-                    continue
-
-            results.sort(key=lambda x: x[2], reverse=True)
-            total = sum(r[2] for r in results)
 
             def fmt_size(b):
                 if b > 1024**3: return f"{b/1024**3:.1f} GB"
                 if b > 1024**2: return f"{b/1024**2:.0f} MB"
                 return f"{b/1024:.0f} KB"
 
+            def dir_size(path):
+                total = 0
+                try:
+                    for dp, _, fns in os.walk(path):
+                        for f in fns:
+                            try: total += os.path.getsize(os.path.join(dp, f))
+                            except Exception: pass
+                except PermissionError:
+                    pass
+                return total
+
+            # ── 1. 已知可清理目录（精确匹配）──────────
+            known = [
+                (os.path.expandvars(r"%TEMP%"),
+                 "系统临时", "Windows 临时文件"),
+                (r"C:\Windows\Temp",
+                 "系统临时", "Windows 系统临时"),
+                (r"C:\Windows\SoftwareDistribution\Download",
+                 "更新缓存", "Windows Update 下载缓存"),
+                (os.path.expandvars(r"%LOCALAPPDATA%\pip\cache"),
+                 "pip缓存", "Python pip 缓存"),
+                (os.path.expandvars(r"%APPDATA%\npm-cache"),
+                 "npm缓存", "npm 包缓存"),
+                (os.path.expandvars(r"%LOCALAPPDATA%\npm-cache"),
+                 "npm缓存", "npm 包缓存"),
+                (os.path.expandvars(r"%LOCALAPPDATA%\Yarn\Cache"),
+                 "yarn缓存", "yarn 包缓存"),
+                (os.path.expandvars(r"%LOCALAPPDATA%\pnpm\store"),
+                 "pnpm缓存", "pnpm 包存储"),
+                (os.path.expandvars(r"%LOCALAPPDATA%\pyinstaller"),
+                 "PyInstaller缓存", "PyInstaller 构建缓存"),
+                (os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Cache"),
+                 "Chrome缓存", "Chrome 浏览器缓存"),
+                (os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Cache"),
+                 "Edge缓存", "Edge 浏览器缓存"),
+                (os.path.expandvars(r"%USERPROFILE%\.ollama\models"),
+                 "Ollama模型", "本地AI模型（删除需重新下载）"),
+                (os.path.expandvars(r"%USERPROFILE%\.cache"),
+                 "用户缓存", "各类工具缓存目录"),
+                (os.path.expandvars(r"%LOCALAPPDATA%\Temp"),
+                 "本地临时", "LocalAppData 临时文件"),
+            ]
+            for path, type_name, desc in known:
+                if not os.path.exists(path): continue
+                size = dir_size(path)
+                if size > 1024 * 1024:
+                    results.append((type_name, path, size, desc))
+
+            # ── 2. 扫描 C 盘根目录下的非系统文件夹 ──
+            WIN11_SYSTEM_DIRS = {
+                "windows", "program files", "program files (x86)",
+                "programdata", "users", "recovery", "$recycle.bin",
+                "system volume information", "perflogs",
+                "msocache", "boot", "$windows.~bt", "$windows.~ws",
+            }
+            try:
+                for name in os.listdir("C:\\"):
+                    if name.lower() in WIN11_SYSTEM_DIRS:
+                        continue
+                    full = os.path.join("C:\\", name)
+                    if not os.path.isdir(full):
+                        continue
+                    size = dir_size(full)
+                    if size > 1024 * 1024:
+                        results.append(("C盘自定义目录", full, size,
+                                         "非系统目录，可检查是否需要"))
+            except PermissionError:
+                pass
+
+            # ── 3. 扫描用户目录下的 node_modules ──
+            user_dir = os.path.expanduser("~")
+            for root, dirs, _ in os.walk(user_dir):
+                depth = root.replace(user_dir, "").count(os.sep)
+                if depth > 5:
+                    dirs.clear(); continue
+                # 跳过已知系统目录
+                dirs[:] = [d for d in dirs if d.lower() not in
+                           {"appdata", ".git", "windows", "system32"}]
+                if "node_modules" in dirs:
+                    nm = os.path.join(root, "node_modules")
+                    size = dir_size(nm)
+                    if size > 1024 * 1024:
+                        results.append(("node_modules", nm, size,
+                                         "Node依赖包，可删除后npm install恢复"))
+                    dirs.remove("node_modules")
+
+            # ── 4. 扫描 Program Files 下的卸载残留 ──
+            for pf in [r"C:\Program Files", r"C:\Program Files (x86)"]:
+                if not os.path.exists(pf): continue
+                try:
+                    for name in os.listdir(pf):
+                        full = os.path.join(pf, name)
+                        if not os.path.isdir(full): continue
+                        # 检查是否有对应的注册表卸载项（简单判断：目录存在但很小可能是残留）
+                        size = dir_size(full)
+                        if 0 < size < 1024 * 1024:  # <1MB 可能是残留
+                            results.append(("安装残留?", full, size,
+                                             "Program Files中的小目录，可能是卸载残留"))
+                        elif size > 100 * 1024 * 1024:  # >100MB 大型软件
+                            results.append(("已安装软件", full, size,
+                                             "已安装的软件目录"))
+                except PermissionError:
+                    pass
+
+            # 去重 + 按大小排序
+            seen = set()
+            unique = []
+            for item in results:
+                key = item[1].lower()
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(item)
+            unique.sort(key=lambda x: x[2], reverse=True)
+
+            total = sum(r[2] for r in unique)
+
             self.after(0, lambda: [
                 self.scan_tree.delete(*self.scan_tree.get_children()),
                 [self.scan_tree.insert("", "end",
                     values=(t, p, fmt_size(s), d))
-                 for t, p, s, d in results],
+                 for t, p, s, d in unique],
                 self._scan_size_lbl.config(
-                    text=f"共 {len(results)} 项，可释放约 {fmt_size(total)}"),
+                    text=f"共 {len(unique)} 项，合计 {fmt_size(total)}"),
                 self._scan_btn.config(state="normal"),
-                self._log(f"✓ 扫描完成，发现 {len(results)} 个可清理项，共 {fmt_size(total)}", "ok")
+                self._log(f"✓ 扫描完成，{len(unique)} 项，共 {fmt_size(total)}", "ok")
             ])
 
         threading.Thread(target=do, daemon=True).start()

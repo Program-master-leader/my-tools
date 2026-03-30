@@ -1082,23 +1082,201 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
     def _build_clean_page(self):
         frame = tk.Frame(self.content, bg=BG)
         self.pages["clean"] = frame
-        tk.Label(frame, text="🗂  文件清理", bg=BG, fg=TEXT,
-                 font=("微软雅黑", 13, "bold")).pack(anchor="w", padx=16, pady=12)
 
-        self.clean_log = tk.Text(frame, bg=BG2, fg=TEXT, font=("Consolas", 10),
-                                  relief="flat", state="disabled", height=15)
-        self.clean_log.pack(fill="both", expand=True, padx=16, pady=4)
+        bar = tk.Frame(frame, bg=BG, pady=8); bar.pack(fill="x", padx=16)
+        tk.Label(bar, text="🗂  文件清理 & C盘管理", bg=BG, fg=TEXT,
+                 font=("微软雅黑", 13, "bold")).pack(side="left")
 
-        btn_frame = tk.Frame(frame, bg=BG)
-        btn_frame.pack(pady=10)
-        StyledButton(btn_frame, "清理临时文件", lambda: self._clean("temp")).pack(side="left", padx=6)
-        StyledButton(btn_frame, "清理未完成下载", lambda: self._clean("dl")).pack(side="left", padx=6)
-        StyledButton(btn_frame, "清理空文件夹", lambda: self._clean("empty")).pack(side="left", padx=6)
-        StyledButton(btn_frame, "整理桌面", lambda: self._run_script("desktop_organizer.py")).pack(side="left", padx=6)
+        # 快速清理按钮
+        quick = tk.Frame(frame, bg=BG); quick.pack(fill="x", padx=16, pady=4)
+        for txt, mode in [("🗑 临时文件","temp"),("⬇ 未完成下载","dl"),
+                          ("📁 空文件夹","empty")]:
+            StyledButton(quick, txt, lambda m=mode: self._clean(m)).pack(side="left", padx=4)
+        StyledButton(quick, "🖥 整理桌面",
+                     lambda: self._run_script("desktop_organizer.py")).pack(side="left", padx=4)
 
-    def _log(self, msg):
+        # C盘扫描区
+        scan_frame = tk.LabelFrame(frame, text="C盘占用扫描（安全可清理项）",
+                                    bg=BG, fg=ACCENT, font=("微软雅黑",10),
+                                    padx=8, pady=6)
+        scan_frame.pack(fill="x", padx=16, pady=6)
+
+        scan_btn_row = tk.Frame(scan_frame, bg=BG); scan_btn_row.pack(fill="x")
+        self._scan_btn = StyledButton(scan_btn_row, "🔍 扫描C盘可清理项",
+                                       self._scan_c_drive, ACCENT)
+        self._scan_btn.pack(side="left", padx=4)
+        self._scan_del_btn = StyledButton(scan_btn_row, "🗑 删除选中项",
+                                           self._delete_selected_scan, DANGER)
+        self._scan_del_btn.pack(side="left", padx=4)
+        self._scan_size_lbl = tk.Label(scan_btn_row, text="", bg=BG, fg=ACCENT2,
+                                        font=("微软雅黑",9))
+        self._scan_size_lbl.pack(side="left", padx=8)
+
+        # 扫描结果列表
+        cols = ("类型", "路径", "大小", "说明")
+        style = ttk.Style()
+        style.configure("Scan.Treeview", background=BG2, foreground=TEXT,
+                        fieldbackground=BG2, rowheight=26, font=("微软雅黑",9))
+        style.configure("Scan.Treeview.Heading", background=BG3, foreground=ACCENT,
+                        font=("微软雅黑",9,"bold"))
+        style.map("Scan.Treeview", background=[("selected","#3d3d5c")])
+
+        scan_tree_frame = tk.Frame(scan_frame, bg=BG)
+        scan_tree_frame.pack(fill="both", expand=True, pady=4)
+        self.scan_tree = ttk.Treeview(scan_tree_frame, columns=cols,
+                                       show="headings", style="Scan.Treeview",
+                                       selectmode="extended", height=8)
+        for col, w in zip(cols, [100, 320, 80, 180]):
+            self.scan_tree.heading(col, text=col)
+            self.scan_tree.column(col, width=w, minwidth=40)
+        scan_sb = ttk.Scrollbar(scan_tree_frame, orient="vertical",
+                                 command=self.scan_tree.yview)
+        self.scan_tree.configure(yscrollcommand=scan_sb.set)
+        self.scan_tree.pack(side="left", fill="both", expand=True)
+        scan_sb.pack(side="right", fill="y")
+
+        # 日志
+        self.clean_log = tk.Text(frame, bg=BG2, fg=TEXT, font=("Consolas",9),
+                                  relief="flat", state="disabled", height=6)
+        self.clean_log.pack(fill="x", padx=16, pady=4)
+        self.clean_log.tag_config("ok",  foreground=ACCENT2)
+        self.clean_log.tag_config("err", foreground=DANGER)
+
+    def _scan_c_drive(self):
+        """扫描C盘常见可安全清理的目录"""
+        self.scan_tree.delete(*self.scan_tree.get_children())
+        self._scan_size_lbl.config(text="扫描中...")
+        self._scan_btn.config(state="disabled")
+
+        def do():
+            import shutil
+            results = []  # (type, path, size_bytes, desc)
+
+            scan_targets = [
+                # npm/node 缓存
+                (os.path.expandvars(r"%APPDATA%\npm-cache"),
+                 "npm缓存", "npm install 产生的缓存，可安全删除"),
+                (os.path.expandvars(r"%LOCALAPPDATA%\npm-cache"),
+                 "npm缓存", "npm缓存"),
+                # pip 缓存
+                (os.path.expandvars(r"%LOCALAPPDATA%\pip\cache"),
+                 "pip缓存", "Python pip 下载缓存"),
+                # yarn 缓存
+                (os.path.expandvars(r"%LOCALAPPDATA%\Yarn\Cache"),
+                 "yarn缓存", "yarn 包缓存"),
+                # pnpm 缓存
+                (os.path.expandvars(r"%LOCALAPPDATA%\pnpm\store"),
+                 "pnpm缓存", "pnpm 包存储"),
+                # Windows 临时文件
+                (os.path.expandvars(r"%TEMP%"),
+                 "系统临时", "Windows 临时文件夹"),
+                (r"C:\Windows\Temp",
+                 "系统临时", "Windows 系统临时文件"),
+                # Windows Update 缓存
+                (r"C:\Windows\SoftwareDistribution\Download",
+                 "更新缓存", "Windows Update 下载缓存，可清理"),
+                # 缩略图缓存
+                (os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Windows\Explorer"),
+                 "缩略图缓存", "文件夹缩略图缓存"),
+                # 浏览器缓存
+                (os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data\Default\Cache"),
+                 "Chrome缓存", "Chrome 浏览器缓存"),
+                (os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data\Default\Cache"),
+                 "Edge缓存", "Edge 浏览器缓存"),
+                # Python __pycache__（用户目录下）
+                (os.path.expandvars(r"%USERPROFILE%\AppData\Local\pyinstaller"),
+                 "PyInstaller缓存", "PyInstaller 构建缓存"),
+                # Ollama 模型（大文件，仅提示）
+                (os.path.expandvars(r"%USERPROFILE%\.ollama\models"),
+                 "Ollama模型", "本地AI模型文件（删除后需重新下载）"),
+                # node_modules（扫描用户目录下的）
+            ]
+
+            # 额外扫描用户目录下的 node_modules
+            user_dir = os.path.expanduser("~")
+            for root, dirs, _ in os.walk(user_dir):
+                # 跳过太深的目录
+                depth = root.replace(user_dir, "").count(os.sep)
+                if depth > 4:
+                    dirs.clear()
+                    continue
+                if "node_modules" in dirs:
+                    nm_path = os.path.join(root, "node_modules")
+                    scan_targets.append((nm_path, "node_modules",
+                                         "Node.js依赖包，可删除后npm install恢复"))
+                    dirs.remove("node_modules")  # 不递归进去
+
+            for path, type_name, desc in scan_targets:
+                if not os.path.exists(path):
+                    continue
+                try:
+                    size = 0
+                    if os.path.isfile(path):
+                        size = os.path.getsize(path)
+                    else:
+                        for dp, dn, fn in os.walk(path):
+                            for f in fn:
+                                try:
+                                    size += os.path.getsize(os.path.join(dp, f))
+                                except Exception:
+                                    pass
+                    if size > 1024 * 1024:  # 只显示 >1MB 的
+                        results.append((type_name, path, size, desc))
+                except PermissionError:
+                    continue
+
+            results.sort(key=lambda x: x[2], reverse=True)
+            total = sum(r[2] for r in results)
+
+            def fmt_size(b):
+                if b > 1024**3: return f"{b/1024**3:.1f} GB"
+                if b > 1024**2: return f"{b/1024**2:.0f} MB"
+                return f"{b/1024:.0f} KB"
+
+            self.after(0, lambda: [
+                self.scan_tree.delete(*self.scan_tree.get_children()),
+                [self.scan_tree.insert("", "end",
+                    values=(t, p, fmt_size(s), d))
+                 for t, p, s, d in results],
+                self._scan_size_lbl.config(
+                    text=f"共 {len(results)} 项，可释放约 {fmt_size(total)}"),
+                self._scan_btn.config(state="normal"),
+                self._log(f"✓ 扫描完成，发现 {len(results)} 个可清理项，共 {fmt_size(total)}", "ok")
+            ])
+
+        threading.Thread(target=do, daemon=True).start()
+
+    def _delete_selected_scan(self):
+        sel = self.scan_tree.selection()
+        if not sel:
+            messagebox.showwarning("提示", "请先选择要删除的项目")
+            return
+        paths = [self.scan_tree.item(s)["values"][1] for s in sel]
+        names = [self.scan_tree.item(s)["values"][0] for s in sel]
+        if not messagebox.askyesno("确认删除",
+                f"确定删除以下 {len(paths)} 项？\n" +
+                "\n".join(f"  • {n}: {p[:50]}" for n,p in zip(names,paths)) +
+                "\n\n⚠ 删除后无法恢复！"):
+            return
+        import shutil
+        deleted = 0
+        for path in paths:
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+                elif os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                deleted += 1
+                self._log(f"✓ 已删除：{path}", "ok")
+            except Exception as e:
+                self._log(f"✗ 删除失败：{path} ({e})", "err")
+        for s in sel:
+            self.scan_tree.delete(s)
+        self._log(f"完成，删除 {deleted}/{len(paths)} 项")
+
+    def _log(self, msg, tag=""):
         self.clean_log.config(state="normal")
-        self.clean_log.insert("end", msg + "\n")
+        self.clean_log.insert("end", msg + "\n", tag)
         self.clean_log.see("end")
         self.clean_log.config(state="disabled")
 

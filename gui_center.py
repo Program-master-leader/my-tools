@@ -443,21 +443,14 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                 out_base = os.path.join(SCRIPT_DIR, f"_tmp_{safe_name}")
 
                 if z7:
-                    self.after(0, lambda: self._sync_toast(f"正在7z压缩「{tool_name}」（可能需要几分钟）..."))
-                    try:
-                        proc = subprocess.Popen(
-                            [z7, "a", "-t7z", "-mx=5", "-ssw", "-v90m",
-                             f"{out_base}.7z", src_path],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            creationflags=0x08000000)
-                        stdout, stderr = proc.communicate()  # 等待完成
-                        retcode = proc.returncode
-                        if retcode > 1:
-                            err_msg = (stderr.decode("gbk", errors="replace") or
-                                       stdout.decode("gbk", errors="replace"))[:200]
-                            raise Exception(err_msg)
-                    except PermissionError as e:
-                        raise Exception(f"权限不足，无法压缩：{e}")
+                    self.after(0, lambda: self._sync_toast(
+                        f"正在7z压缩「{tool_name}」（可能需要几分钟）..."))
+                    retcode = subprocess.call(
+                        [z7, "a", "-t7z", "-mx=1", "-ssw", "-v90m",
+                         f"{out_base}.7z", src_path],
+                        creationflags=0x08000000)
+                    if retcode > 1:
+                        raise Exception(f"7z 返回错误码 {retcode}")
                     # 找生成的分卷文件
                     part_files = sorted([
                         os.path.join(SCRIPT_DIR, f)

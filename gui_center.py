@@ -445,12 +445,12 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                     # 7z 分卷压缩，-v90m 每卷90MB，-mx=5 中等压缩率（速度/大小平衡）
                     self.after(0, lambda: self._sync_toast(f"正在7z压缩「{tool_name}」..."))
                     r = subprocess.run(
-                        [z7, "a", "-t7z", "-mx=5",
+                        [z7, "a", "-t7z", "-mx=5", "-ssw",
                          f"-v{PART_SIZE}b",
                          f"{out_base}.7z", src_path],
                         capture_output=True, text=True)
-                    if r.returncode != 0:
-                        raise Exception(r.stderr[:200])
+                    if r.returncode > 1:  # 0=成功 1=警告(有文件跳过) 2+=错误
+                        raise Exception(r.stderr[:200] or r.stdout[:200])
                     # 找生成的分卷文件
                     part_files = sorted([
                         os.path.join(SCRIPT_DIR, f)

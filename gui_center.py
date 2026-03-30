@@ -742,6 +742,21 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                           command=lambda idx=i: self._download_by_idx(idx)
                           ).pack(side="left", padx=2)
 
+            # ☁ 同步按钮：未同步到 Git 时显示
+            if git_txt in ("⚠ 未追踪", "— 本地"):
+                def _sync_tool(tool=t, path=abs_path):
+                    size_mb = self._get_path_size_mb(path)
+                    if size_mb > 95:
+                        if messagebox.askyesno("文件较大",
+                            f"「{tool['name']}」约 {size_mb:.0f} MB，超出单文件限制。\n\n"
+                            f"是 → 自动7z分卷压缩后上传\n否 → 取消"):
+                            self._split_and_sync(path, tool["name"])
+                    else:
+                        self._git_sync(path, tool["name"])
+                tk.Button(btn_area, text="☁ 同步", bg="#89dceb", fg=BG,
+                          relief="flat", font=("微软雅黑",9), padx=8, pady=3,
+                          cursor="hand2", command=_sync_tool).pack(side="left", padx=2)
+
             # 绑定子控件点击也能选中行
             for child in row.winfo_children():
                 if not isinstance(child, tk.Button):

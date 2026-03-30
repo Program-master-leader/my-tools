@@ -374,12 +374,12 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         # 计算大小，判断是否超出 Git 限制（50MB）
         pan_url = ""
         size_mb = self._get_path_size_mb(real_path)
-        GIT_LIMIT_MB = 50
+        GIT_LIMIT_MB = 95  # 单文件限制：GitHub/Gitee 均为100MB，留5MB余量
 
         if size_mb > GIT_LIMIT_MB:
             ans = messagebox.askyesno(
                 "文件较大，建议网盘备份",
-                f"「{name}」大小约 {size_mb:.0f} MB，超出 Git 托管限制（{GIT_LIMIT_MB} MB）。\n\n"
+                f"「{name}」大小约 {size_mb:.0f} MB，超出单文件 Git 限制（100 MB）。\n\n"
                 f"建议手动上传到百度网盘后填写分享链接，\n"
                 f"换电脑时可一键跳转下载。\n\n"
                 f"是 → 现在填写百度网盘链接\n"

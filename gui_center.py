@@ -429,7 +429,8 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                       r"C:\Program Files (x86)\7-Zip\7z.exe"]:
                 try:
                     if subprocess.run([p, "i"], capture_output=True,
-                                      timeout=3).returncode == 0:
+                                      timeout=3, creationflags=0x08000000
+                                      ).returncode == 0:
                         return p
                 except Exception:
                     pass
@@ -448,7 +449,8 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                         [z7, "a", "-t7z", "-mx=5", "-ssw",
                          f"-v{PART_SIZE}b",
                          f"{out_base}.7z", src_path],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True,
+                        creationflags=0x08000000)  # CREATE_NO_WINDOW
                     if r.returncode > 1:  # 0=成功 1=警告(有文件跳过) 2+=错误
                         raise Exception(r.stderr[:200] or r.stdout[:200])
                     # 找生成的分卷文件

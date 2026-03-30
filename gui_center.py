@@ -423,7 +423,9 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         PART_SIZE = 90 * 1024 * 1024  # 90MB 每卷
 
         def find_7z():
-            for p in ["7z", r"C:\Program Files\7-Zip\7z.exe",
+            for p in ["7z",
+                      r"D:\Program Files\7-Zip\7z.exe",
+                      r"C:\Program Files\7-Zip\7z.exe",
                       r"C:\Program Files (x86)\7-Zip\7z.exe"]:
                 try:
                     if subprocess.run([p, "i"], capture_output=True,

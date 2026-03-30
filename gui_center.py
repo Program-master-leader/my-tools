@@ -377,14 +377,25 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         GIT_LIMIT_MB = 95  # 单文件限制：GitHub/Gitee 均为100MB，留5MB余量
 
         if size_mb > GIT_LIMIT_MB:
-            ans = messagebox.askyesno(
-                "文件较大，建议网盘备份",
+            ans = messagebox.askyesnocancel(
+                "文件较大",
                 f"「{name}」大小约 {size_mb:.0f} MB，超出单文件 Git 限制（100 MB）。\n\n"
-                f"建议手动上传到百度网盘后填写分享链接，\n"
-                f"换电脑时可一键跳转下载。\n\n"
-                f"是 → 现在填写百度网盘链接\n"
-                f"否 → 跳过（只记录本地路径）")
-            if ans:
+                f"选择处理方式：\n"
+                f"是  → 分卷压缩后上传 Git（自动切分为 <95MB 的分卷）\n"
+                f"否  → 填写百度网盘链接备份\n"
+                f"取消 → 只记录本地路径")
+            if ans is None:
+                pass  # 取消，只记录路径
+            elif ans:
+                # 分卷压缩上传
+                self._split_and_sync(real_path, name)
+                entry = {"name": name, "path": real_path, "desc": desc,
+                         "url": "", "url_backup": ""}
+                self.tools.append(entry)
+                save_tools(self.tools)
+                self.refresh_tools()
+                return
+            else:
                 pan_url = simpledialog.askstring(
                     "百度网盘链接",
                     f"请将「{name}」上传到百度网盘后，\n粘贴分享链接（含提取码）：") or ""
@@ -404,6 +415,59 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         else:
             self._sync_toast(f"「{name}」较大，已跳过 Git 同步" +
                              ("，网盘链接已保存" if pan_url else ""))
+
+    def _split_and_sync(self, src_path, tool_name):
+        """分卷压缩大文件并推送到 Git"""
+        import zipfile, math, threading
+
+        PART_SIZE = 90 * 1024 * 1024  # 90MB 每卷
+
+        def do():
+            try:
+                # 压缩到临时 zip
+                zip_path = os.path.join(SCRIPT_DIR, f"_tmp_{tool_name}.zip")
+                self._sync_toast(f"正在压缩「{tool_name}」...")
+                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED,
+                                     compresslevel=6) as zf:
+                    if os.path.isdir(src_path):
+                        for root, _, files in os.walk(src_path):
+                            for f in files:
+                                fp = os.path.join(root, f)
+                                zf.write(fp, os.path.relpath(fp, os.path.dirname(src_path)))
+                    else:
+                        zf.write(src_path, os.path.basename(src_path))
+
+                zip_size = os.path.getsize(zip_path)
+                parts = math.ceil(zip_size / PART_SIZE)
+
+                if parts == 1:
+                    # 压缩后 <90MB，直接上传
+                    dst = os.path.join(SCRIPT_DIR, f"{tool_name}.zip")
+                    os.rename(zip_path, dst)
+                    self._git_sync(dst, tool_name)
+                else:
+                    # 分卷
+                    self._sync_toast(f"压缩完成，分割为 {parts} 卷上传...")
+                    with open(zip_path, "rb") as f:
+                        for i in range(parts):
+                            part_name = f"{tool_name}.z{i+1:02d}"
+                            part_path = os.path.join(SCRIPT_DIR, part_name)
+                            chunk = f.read(PART_SIZE)
+                            with open(part_path, "wb") as pf:
+                                pf.write(chunk)
+                    os.unlink(zip_path)
+                    # 推送所有分卷
+                    for i in range(parts):
+                        part_path = os.path.join(SCRIPT_DIR,
+                                                   f"{tool_name}.z{i+1:02d}")
+                        self._git_sync(part_path, f"{tool_name} 分卷{i+1}/{parts}")
+                    self.after(0, lambda: self._sync_toast(
+                        f"✓ 「{tool_name}」已分 {parts} 卷上传完成"))
+            except Exception as e:
+                self.after(0, lambda: self._sync_toast(
+                    f"分卷上传失败：{e}", ok=False))
+
+        threading.Thread(target=do, daemon=True).start()
 
     def _git_sync(self, src_path, tool_name):
         """把新增工具同步到 Git 仓库（优先 Gitee，失败只推 Gitee 也算成功）"""

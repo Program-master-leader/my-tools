@@ -1249,14 +1249,11 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                     for name in os.listdir(pf):
                         full = os.path.join(pf, name)
                         if not os.path.isdir(full): continue
-                        # 检查是否有对应的注册表卸载项（简单判断：目录存在但很小可能是残留）
                         size = dir_size(full)
                         if 0 < size < 1024 * 1024:  # <1MB 可能是残留
-                            results.append(("安装残留?", full, size,
-                                             "Program Files中的小目录，可能是卸载残留"))
-                        elif size > 100 * 1024 * 1024:  # >100MB 大型软件
-                            results.append(("已安装软件", full, size,
-                                             "已安装的软件目录"))
+                            results.append(("⚠ 安装残留?", full, size,
+                                             "很小的目录，可能是卸载残留"))
+                        # 大型软件不再列入（避免误删）
                 except PermissionError:
                     pass
 
@@ -1275,10 +1272,13 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             self.after(0, lambda: [
                 self.scan_tree.delete(*self.scan_tree.get_children()),
                 [self.scan_tree.insert("", "end",
-                    values=(t, p, fmt_size(s), d))
+                    values=(t, p, fmt_size(s), d),
+                    tags=("safe",) if any(k in t for k in ("缓存","临时","残留","node_modules")) else ("info",))
                  for t, p, s, d in unique],
+                self.scan_tree.tag_configure("safe", foreground=ACCENT2),
+                self.scan_tree.tag_configure("info", foreground=TEXT_DIM),
                 self._scan_size_lbl.config(
-                    text=f"共 {len(unique)} 项，合计 {fmt_size(total)}"),
+                    text=f"共 {len(unique)} 项，合计 {fmt_size(total)}  |  绿色=可安全清理  灰色=仅供参考"),
                 self._scan_btn.config(state="normal"),
                 self._log(f"✓ 扫描完成，{len(unique)} 项，共 {fmt_size(total)}", "ok")
             ])

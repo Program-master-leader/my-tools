@@ -156,6 +156,7 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             ("🗂  文件清理", "clean"),
             ("🔧  环境变量", "env"),
             ("💾  系统备份", "backup"),
+            ("🔑  账号管理", "accounts"),
         ]
         self.nav_btns = {}
         for label, key in nav_items:
@@ -176,8 +177,55 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         self._build_clean_page()
         self._build_env_page()
         self._build_backup_page()
+        self._build_accounts_page()
 
         self.show_page("tools")
+
+    # ── 账号管理页 ────────────────────────────────────
+
+    def _build_accounts_page(self):
+        frame = tk.Frame(self.content, bg=BG)
+        self.pages["accounts"] = frame
+
+        # 直接嵌入 account_manager 的 Frame，避免开新窗口
+        try:
+            from account_manager import AccountManagerFrame
+
+            am = AccountManagerFrame(frame)
+            am.pack(fill="both", expand=True)
+        except Exception as e:
+            tk.Label(
+                frame,
+                text="账号管理模块加载失败。\n请确认 account_manager.py 存在且无语法错误。\n\n"
+                + str(e),
+                bg=BG,
+                fg=DANGER,
+                font=("微软雅黑", 11),
+                justify="left",
+            ).pack(anchor="w", padx=16, pady=16)
+
+            tk.Button(
+                frame,
+                text="▶ 以独立窗口打开账号管理",
+                bg=ACCENT2,
+                fg=BG,
+                relief="flat",
+                font=("微软雅黑", 10),
+                padx=14,
+                pady=8,
+                cursor="hand2",
+                command=lambda: self._open_account_manager_window(),
+            ).pack(anchor="w", padx=16, pady=4)
+
+    def _open_account_manager_window(self):
+        try:
+            import subprocess, sys, os
+
+            path = os.path.join(SCRIPT_DIR, "account_manager.py")
+            if os.path.exists(path):
+                subprocess.Popen([sys.executable, path], cwd=SCRIPT_DIR, shell=False)
+        except Exception:
+            pass
 
     def show_page(self, key):
         for k, frame in self.pages.items():
@@ -1280,15 +1328,22 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             wib = os.path.join(root, "WindowsImageBackup")
             if not os.path.isdir(wib):
                 continue
-            for pc_name in os.listdir(wib):
+            try:
+                pc_names = os.listdir(wib)
+            except PermissionError:
+                continue
+            for pc_name in pc_names:
                 pc_path = os.path.join(wib, pc_name)
                 if not os.path.isdir(pc_path):
                     continue
                 label = type_labels["wbadmin"]
-                # 找最早的 Backup xxx 子目录来确定备份时间
                 sort_key = datetime.datetime.min
                 time_str = "未知时间"
-                for sub in os.listdir(pc_path):
+                try:
+                    sub_items = os.listdir(pc_path)
+                except PermissionError:
+                    sub_items = []
+                for sub in sub_items:
                     if not sub.startswith("Backup "):
                         continue
                     try:
@@ -1300,7 +1355,6 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                             time_str = dt.strftime("%Y-%m-%d %H:%M:%S")
                     except Exception:
                         pass
-                # 兜底：用文件夹修改时间
                 if sort_key == datetime.datetime.min:
                     try:
                         mtime = os.path.getmtime(pc_path)

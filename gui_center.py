@@ -417,55 +417,90 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                              ("，网盘链接已保存" if pan_url else ""))
 
     def _split_and_sync(self, src_path, tool_name):
-        """分卷压缩大文件并推送到 Git"""
-        import zipfile, math, threading
+        """分卷压缩大文件并推送到 Git，优先用7z，降级用zip"""
+        import math, threading, shutil
 
         PART_SIZE = 90 * 1024 * 1024  # 90MB 每卷
 
+        def find_7z():
+            for p in ["7z", r"C:\Program Files\7-Zip\7z.exe",
+                      r"C:\Program Files (x86)\7-Zip\7z.exe"]:
+                try:
+                    if subprocess.run([p, "i"], capture_output=True,
+                                      timeout=3).returncode == 0:
+                        return p
+                except Exception:
+                    pass
+            return None
+
         def do():
             try:
-                # 压缩到临时 zip
-                zip_path = os.path.join(SCRIPT_DIR, f"_tmp_{tool_name}.zip")
-                self._sync_toast(f"正在压缩「{tool_name}」...")
-                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED,
-                                     compresslevel=6) as zf:
-                    if os.path.isdir(src_path):
-                        for root, _, files in os.walk(src_path):
-                            for f in files:
-                                fp = os.path.join(root, f)
-                                zf.write(fp, os.path.relpath(fp, os.path.dirname(src_path)))
-                    else:
-                        zf.write(src_path, os.path.basename(src_path))
+                z7 = find_7z()
+                safe_name = tool_name.replace(" ", "_")
+                out_base = os.path.join(SCRIPT_DIR, f"_tmp_{safe_name}")
 
-                zip_size = os.path.getsize(zip_path)
-                parts = math.ceil(zip_size / PART_SIZE)
-
-                if parts == 1:
-                    # 压缩后 <90MB，直接上传
-                    dst = os.path.join(SCRIPT_DIR, f"{tool_name}.zip")
-                    os.rename(zip_path, dst)
-                    self._git_sync(dst, tool_name)
+                if z7:
+                    # 7z 分卷压缩，-v90m 每卷90MB，-mx=5 中等压缩率（速度/大小平衡）
+                    self.after(0, lambda: self._sync_toast(f"正在7z压缩「{tool_name}」..."))
+                    r = subprocess.run(
+                        [z7, "a", "-t7z", "-mx=5",
+                         f"-v{PART_SIZE}b",
+                         f"{out_base}.7z", src_path],
+                        capture_output=True, text=True)
+                    if r.returncode != 0:
+                        raise Exception(r.stderr[:200])
+                    # 找生成的分卷文件
+                    part_files = sorted([
+                        os.path.join(SCRIPT_DIR, f)
+                        for f in os.listdir(SCRIPT_DIR)
+                        if f.startswith(f"_tmp_{safe_name}.7z")
+                    ])
                 else:
-                    # 分卷
-                    self._sync_toast(f"压缩完成，分割为 {parts} 卷上传...")
+                    # 降级：Python zipfile 分卷
+                    import zipfile
+                    self.after(0, lambda: self._sync_toast(
+                        f"未找到7z，使用zip压缩「{tool_name}」..."))
+                    zip_path = f"{out_base}.zip"
+                    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED,
+                                         compresslevel=9) as zf:
+                        if os.path.isdir(src_path):
+                            for root, _, files in os.walk(src_path):
+                                for f in files:
+                                    fp = os.path.join(root, f)
+                                    zf.write(fp, os.path.relpath(
+                                        fp, os.path.dirname(src_path)))
+                        else:
+                            zf.write(src_path, os.path.basename(src_path))
+                    # 手动分卷
+                    zip_size = os.path.getsize(zip_path)
+                    parts = math.ceil(zip_size / PART_SIZE)
+                    part_files = []
                     with open(zip_path, "rb") as f:
                         for i in range(parts):
-                            part_name = f"{tool_name}.z{i+1:02d}"
-                            part_path = os.path.join(SCRIPT_DIR, part_name)
-                            chunk = f.read(PART_SIZE)
-                            with open(part_path, "wb") as pf:
-                                pf.write(chunk)
+                            pf = f"{out_base}.z{i+1:02d}"
+                            with open(pf, "wb") as out:
+                                out.write(f.read(PART_SIZE))
+                            part_files.append(pf)
                     os.unlink(zip_path)
-                    # 推送所有分卷
-                    for i in range(parts):
-                        part_path = os.path.join(SCRIPT_DIR,
-                                                   f"{tool_name}.z{i+1:02d}")
-                        self._git_sync(part_path, f"{tool_name} 分卷{i+1}/{parts}")
-                    self.after(0, lambda: self._sync_toast(
-                        f"✓ 「{tool_name}」已分 {parts} 卷上传完成"))
-            except Exception as e:
+
+                total_parts = len(part_files)
                 self.after(0, lambda: self._sync_toast(
-                    f"分卷上传失败：{e}", ok=False))
+                    f"压缩完成，共 {total_parts} 卷，开始上传..."))
+
+                for i, pf in enumerate(part_files):
+                    fname = os.path.basename(pf)
+                    dst = os.path.join(SCRIPT_DIR, fname)
+                    if pf != dst:
+                        shutil.move(pf, dst)
+                    self._git_sync(dst, f"{tool_name} [{i+1}/{total_parts}]")
+
+                self.after(0, lambda: self._sync_toast(
+                    f"✓ 「{tool_name}」已分 {total_parts} 卷上传完成"))
+
+            except Exception as e:
+                err = str(e)
+                self.after(0, lambda: self._sync_toast(
+                    f"分卷上传失败：{err[:100]}", ok=False))
 
         threading.Thread(target=do, daemon=True).start()
 

@@ -447,7 +447,7 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                     self.after(0, lambda: self._sync_toast(f"正在7z压缩「{tool_name}」..."))
                     r = subprocess.run(
                         [z7, "a", "-t7z", "-mx=5", "-ssw",
-                         f"-v{PART_SIZE}b",
+                         "-v90m",
                          f"{out_base}.7z", src_path],
                         capture_output=True, text=True,
                         creationflags=0x08000000)  # CREATE_NO_WINDOW

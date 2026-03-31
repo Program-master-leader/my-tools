@@ -7,6 +7,7 @@
 import os, sys, threading, subprocess
 import tkinter as tk
 from tkinter import ttk, filedialog, scrolledtext
+import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SAVE = os.path.join(os.path.expanduser("~"), "Downloads", "视频下载")
@@ -176,7 +177,6 @@ class VideoDownloader(tk.Tk):
         r2 = tk.Frame(self._adv_frame, bg=BG2); r2.pack(fill="x", pady=2)
         tk.Label(r2, text="代理地址：", bg=BG2, fg=TEXT,
                  font=("微软雅黑",9), width=12, anchor="w").pack(side="left")
-        self.proxy_var = tk.StringVar(placeholder="留空不使用代理，如：http://127.0.0.1:7890")
         self.proxy_var = tk.StringVar()
         tk.Entry(r2, textvariable=self.proxy_var, bg=BG3, fg=TEXT,
                  insertbackground=TEXT, relief="flat", font=("微软雅黑",9), width=36
@@ -247,6 +247,7 @@ class VideoDownloader(tk.Tk):
 
         self._log("支持平台：B站、YouTube、Twitter/X、抖音、微博、TikTok 等数百个网站", "info")
         self._log("粘贴视频链接后点击「开始下载」即可", "info")
+        self._log("提示：会员/VIP内容若已购买且网页可播放，可在高级设置用 Cookie 登录态下载；如遇 DRM 加密则只能用官方离线缓存。", "info")
 
     def _log(self, msg, tag=""):
         self.log.config(state="normal")
@@ -391,9 +392,15 @@ class VideoDownloader(tk.Tk):
         def do():
             try:
                 import yt_dlp
+                headers = {"User-Agent": self._get_ua()}
+                if "v.qq.com" in url:
+                    headers["Referer"] = "https://v.qq.com/"
                 with yt_dlp.YoutubeDL({
                     "quiet": True,
-                    "http_headers": {"User-Agent": self._get_ua()},
+                    "http_headers": headers,
+                    "force_ipv4": True,
+                    "socket_timeout": 20,
+                    "retries": int(self.retry_var.get()),
                 }) as ydl:
                     info = ydl.extract_info(url, download=False)
                 title    = info.get("title", "未知")
@@ -448,6 +455,9 @@ class VideoDownloader(tk.Tk):
                 import yt_dlp
                 fmt = self._get_format()
                 is_audio = "音频" in self.quality_var.get()
+                headers = {"User-Agent": self._get_ua()}
+                if "v.qq.com" in url:
+                    headers["Referer"] = "https://v.qq.com/"
                 opts = {
                     "format": fmt,
                     "outtmpl": os.path.join(save_dir, "%(title)s.%(ext)s"),
@@ -456,9 +466,12 @@ class VideoDownloader(tk.Tk):
                     "no_warnings": True,
                     "merge_output_format": "mp4",
                     # 防封IP优化
-                    "http_headers": {"User-Agent": self._get_ua()},
+                    "http_headers": headers,
                     "retries": int(self.retry_var.get()),
                     "fragment_retries": int(self.retry_var.get()),
+                    "extractor_retries": int(self.retry_var.get()),
+                    "force_ipv4": True,
+                    "socket_timeout": 20,
                     "sleep_interval": 1,        # 请求间隔1秒
                     "max_sleep_interval": 3,    # 最多随机等3秒
                     "sleep_interval_requests": 1,
@@ -611,6 +624,7 @@ class VideoDownloader(tk.Tk):
         self.batch_count_lbl.config(text="扫描中...")
         self.scan_btn.config(state="disabled")
         self.batch_progress.start(10)
+        self._log(f"开始扫描：{url}", "info")
 
         limit_str = self.batch_limit_var.get()
         limit = None if limit_str == "全部" else int(limit_str)
@@ -618,16 +632,44 @@ class VideoDownloader(tk.Tk):
         def do():
             try:
                 import yt_dlp
+                t0 = time.time()
+                headers = {"User-Agent": self._get_ua()}
+                if "v.qq.com" in url:
+                    headers["Referer"] = "https://v.qq.com/"
                 opts = {
                     "quiet": True,
                     "extract_flat": True,   # 只获取列表，不下载
-                    "http_headers": {"User-Agent": self._get_ua()},
+                    "http_headers": headers,
+                    "socket_timeout": 20,
+                    "retries": int(self.retry_var.get()),
+                    "extractor_retries": int(self.retry_var.get()),
+                    "force_ipv4": True,
                 }
                 if limit:
                     opts["playlistend"] = limit
 
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
+                # 扫描也带上代理 / Cookie（很多站点不带登录态会返回空）
+                proxy = self.proxy_var.get().strip()
+                if proxy:
+                    opts["proxy"] = proxy
+                cookie = self.cookie_var.get().strip()
+                if cookie and os.path.exists(cookie):
+                    opts["cookiefile"] = cookie
+                elif not cookie:
+                    browser = self.browser_var.get()
+                    opts["cookiesfrombrowser"] = (browser,)
+
+                # 腾讯扫描：先轻量探测（快），失败再深挖（慢但更准）
+                info = None
+                try:
+                    with yt_dlp.YoutubeDL({**opts, "extract_flat": True}) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                except Exception:
+                    if "v.qq.com" in url:
+                        with yt_dlp.YoutubeDL({**opts, "extract_flat": False}) as ydl:
+                            info = ydl.extract_info(url, download=False)
+                    else:
+                        raise
 
                 entries = []
                 if info.get("_type") == "playlist" or info.get("entries"):
@@ -636,7 +678,9 @@ class VideoDownloader(tk.Tk):
                     # 单个视频
                     entries = [info]
 
-                self.after(0, lambda: self._render_playlist(entries))
+                elapsed = time.time() - t0
+                self.after(0, lambda: self._log(f"✓ 扫描完成：{len(entries)} 条，用时 {elapsed:.1f}s", "ok"))
+                self.after(0, lambda: self._render_playlist(entries, source_url=url))
             except Exception as e:
                 err = str(e)
                 self.after(0, lambda: [
@@ -644,10 +688,11 @@ class VideoDownloader(tk.Tk):
                     self.scan_btn.config(state="normal"),
                     self.batch_progress.stop()
                 ])
+                self.after(0, lambda: self._log(f"✗ 扫描失败：{err}", "err"))
 
         threading.Thread(target=do, daemon=True).start()
 
-    def _render_playlist(self, entries):
+    def _render_playlist(self, entries, source_url=""):
         self.batch_progress.stop()
         self.scan_btn.config(state="normal")
         self._playlist_items.clear()
@@ -683,6 +728,17 @@ class VideoDownloader(tk.Tk):
                      font=("微软雅黑",9), width=8).pack(side="left")
 
         total = len(self._playlist_items)
+        if total <= 0:
+            msg = "未扫描到可下载视频"
+            # 腾讯专题页常见：封面页可打开，但接口返回0条
+            if "v.qq.com" in (source_url or ""):
+                msg += "（腾讯视频请改用具体分集链接，或先登录后使用 Cookie）"
+            self.batch_count_lbl.config(text=msg)
+            self._log("⚠ 扫描到 0 个条目。可能是页面改版、需要登录态，或该内容受 DRM 限制。", "err")
+            self._log("建议：进入具体视频播放页复制链接，再扫描/下载。", "info")
+            self.batch_dl_btn.config(state="disabled")
+            return
+
         self.batch_count_lbl.config(text=f"共 {total} 个视频，已全选")
         if total > 0:
             self.batch_dl_btn.config(state="normal")
@@ -728,9 +784,16 @@ class VideoDownloader(tk.Tk):
                         "http_headers": {"User-Agent": self._get_ua()},
                         "retries": int(self.retry_var.get()),
                     }
+                    # 代理（批量页复用单页的代理输入）
+                    proxy = self.proxy_var.get().strip()
+                    if proxy:
+                        opts["proxy"] = proxy
                     cookie = self.cookie_var.get().strip()
                     if cookie and os.path.exists(cookie):
                         opts["cookiefile"] = cookie
+                    elif not cookie:
+                        browser = self.browser_var.get()
+                        opts["cookiesfrombrowser"] = (browser,)
                     with yt_dlp.YoutubeDL(opts) as ydl:
                         ydl.download([url])
                     done += 1

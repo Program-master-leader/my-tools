@@ -633,6 +633,7 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         self.after(6000, lambda: self._toast_label.config(text=""))
 
     def refresh_tools(self):
+        if not hasattr(self, '_dep_cache'): self._dep_cache = {}
         self.tools = load_tools()
         # 清空卡片列表
         for w in self._list_frame.winfo_children():
@@ -658,7 +659,28 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             has_git  = t.get("url") or t.get("url_backup")
 
             if exists:
-                status_txt, status_fg = "✓ 正常", ACCENT2
+                # .py 文件检查依赖（带缓存，避免每次刷新都跑）
+                if abs_path.endswith(".py"):
+                    cache_key = abs_path
+                    cached = self._dep_cache.get(cache_key)
+                    if cached is None:
+                        # 先显示正常，后台异步检查
+                        status_txt, status_fg = "✓ 正常", ACCENT2
+                        self._dep_cache[cache_key] = []  # 占位
+                        def _async_check(p=abs_path, k=cache_key, idx=i):
+                            missing = self._check_py_deps(p)
+                            self._dep_cache[k] = missing
+                            if missing:
+                                self.after(0, lambda: self.refresh_tools())
+                        import threading
+                        threading.Thread(target=_async_check, daemon=True).start()
+                    elif cached:
+                        status_txt = "⚠ 缺" + cached[0]
+                        status_fg = "#f9e2af"
+                    else:
+                        status_txt, status_fg = "✓ 正常", ACCENT2
+                else:
+                    status_txt, status_fg = "✓ 正常", ACCENT2
             elif has_pan:
                 status_txt, status_fg = "📦 网盘", "#f9e2af"
             elif has_git:
@@ -700,6 +722,28 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             # 操作按钮区
             btn_area = tk.Frame(row, bg=row_bg)
             btn_area.pack(side="left", padx=4)
+
+            # 🔍 检测依赖按鈕（仅 .py 文件）
+            if abs_path.endswith(".py") and exists:
+                def _chk(p=abs_path, n=t["name"]):
+                    missing = self._check_py_deps(p)
+                    if missing:
+                        msg = "\n".join(missing)
+                        if messagebox.askyesno("缺少依赖",
+                                "「" + n + "」缺少以下模块：\n" + msg + "\n\n是否立即安装？"):
+                            py = find_python()
+                            for m in missing:
+                                subprocess.run([py, "-m", "pip", "install", m],
+                                    creationflags=0x08000000)
+                            self._dep_cache.pop(p, None)
+                            messagebox.showinfo("完成", "依赖安装完成，刷新列表")
+                            self.refresh_tools()
+                    else:
+                        messagebox.showinfo("✓ 依赖正常", "「" + n + "」所有依赖均已安装")
+                tk.Button(btn_area, text="🔍", bg=row_bg, fg=TEXT_DIM,
+                          relief="flat", font=("微软雅黑", 9),
+                          cursor="hand2", command=_chk).pack(side="left")
+
 
             # 判断是否可启动
             launch_path = t.get("launch") or t.get("launch_app") or (abs_path if exists else None)
@@ -820,6 +864,32 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             for child in row.winfo_children():
                 if not isinstance(child, tk.Button):
                     child.bind("<Button-1>", _select)
+
+
+    def _check_py_deps(self, path):
+        """快速检查 .py 文件的顶层 import 是否都能导入，返回缺失模块列表"""
+        py = find_python()
+        if not py: return []
+        try:
+            import ast as _ast
+            tree = _ast.parse(open(path, "rb").read())
+            missing, checked = [], set()
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.Import):
+                    mod = node.names[0].name.split(".")[0]
+                elif isinstance(node, _ast.ImportFrom):
+                    mod = (node.module or "").split(".")[0]
+                else:
+                    continue
+                if not mod or mod in checked: continue
+                checked.add(mod)
+                r = subprocess.run([py, "-c", "import " + mod],
+                    capture_output=True, timeout=2, creationflags=0x08000000)
+                if r.returncode != 0:
+                    missing.append(mod)
+            return missing
+        except Exception:
+            return []
 
     def _selected_idx(self):
         if self._selected_idx_var is None:
@@ -1310,32 +1380,34 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         tk.Label(bar, text="🗂  文件清理 & C盘管理", bg=BG, fg=TEXT,
                  font=("微软雅黑", 13, "bold")).pack(side="left")
 
-        # 快速清理按钮
         quick = tk.Frame(frame, bg=BG); quick.pack(fill="x", padx=16, pady=4)
-        for txt, mode in [("🗑 临时文件","temp"),("⬇ 未完成下载","dl"),
-                          ("📁 空文件夹","empty")]:
+        for txt, mode in [("🗑 临时文件","temp"),("⬇ 未完成下载","dl"),("📁 空文件夹","empty")]:
             StyledButton(quick, txt, lambda m=mode: self._clean(m)).pack(side="left", padx=4)
         StyledButton(quick, "🖥 整理桌面",
                      lambda: self._run_script("desktop_organizer.py")).pack(side="left", padx=4)
 
-        # C盘扫描区
-        scan_frame = tk.LabelFrame(frame, text="C盘占用扫描（安全可清理项）",
-                                    bg=BG, fg=ACCENT, font=("微软雅黑",10),
-                                    padx=8, pady=6)
+        # 滚动容器
+        _cv = tk.Canvas(frame, bg=BG, highlightthickness=0)
+        _sb = ttk.Scrollbar(frame, orient="vertical", command=_cv.yview)
+        _cv.configure(yscrollcommand=_sb.set)
+        _sb.pack(side="right", fill="y")
+        _cv.pack(side="left", fill="both", expand=True)
+        sb_body = tk.Frame(_cv, bg=BG)
+        _cw = _cv.create_window((0, 0), window=sb_body, anchor="nw")
+        sb_body.bind("<Configure>", lambda e: _cv.configure(scrollregion=_cv.bbox("all")))
+        _cv.bind("<Configure>", lambda e: _cv.itemconfig(_cw, width=e.width))
+
+        # C盘占用扫描区
+        scan_frame = tk.LabelFrame(sb_body, text="C盘占用扫描（安全可清理项）",
+                                    bg=BG, fg=ACCENT, font=("微软雅黑",10), padx=8, pady=6)
         scan_frame.pack(fill="x", padx=16, pady=6)
-
-        scan_btn_row = tk.Frame(scan_frame, bg=BG); scan_btn_row.pack(fill="x")
-        self._scan_btn = StyledButton(scan_btn_row, "🔍 扫描C盘可清理项",
-                                       self._scan_c_drive, ACCENT)
+        sbr = tk.Frame(scan_frame, bg=BG); sbr.pack(fill="x")
+        self._scan_btn = StyledButton(sbr, "🔍 扫描C盘可清理项", self._scan_c_drive, ACCENT)
         self._scan_btn.pack(side="left", padx=4)
-        self._scan_del_btn = StyledButton(scan_btn_row, "🗑 删除选中项",
-                                           self._delete_selected_scan, DANGER)
+        self._scan_del_btn = StyledButton(sbr, "🗑 删除选中项", self._delete_selected_scan, DANGER)
         self._scan_del_btn.pack(side="left", padx=4)
-        self._scan_size_lbl = tk.Label(scan_btn_row, text="", bg=BG, fg=ACCENT2,
-                                        font=("微软雅黑",9))
+        self._scan_size_lbl = tk.Label(sbr, text="", bg=BG, fg=ACCENT2, font=("微软雅黑",9))
         self._scan_size_lbl.pack(side="left", padx=8)
-
-        # 扫描结果列表
         cols = ("类型", "路径", "大小", "说明")
         style = ttk.Style()
         style.configure("Scan.Treeview", background=BG2, foreground=TEXT,
@@ -1343,24 +1415,69 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         style.configure("Scan.Treeview.Heading", background=BG3, foreground=ACCENT,
                         font=("微软雅黑",9,"bold"))
         style.map("Scan.Treeview", background=[("selected","#3d3d5c")])
-
-        scan_tree_frame = tk.Frame(scan_frame, bg=BG)
-        scan_tree_frame.pack(fill="both", expand=True, pady=4)
-        self.scan_tree = ttk.Treeview(scan_tree_frame, columns=cols,
-                                       show="headings", style="Scan.Treeview",
-                                       selectmode="extended", height=8)
+        stf = tk.Frame(scan_frame, bg=BG); stf.pack(fill="both", expand=True, pady=4)
+        self.scan_tree = ttk.Treeview(stf, columns=cols, show="headings",
+                                       style="Scan.Treeview", selectmode="extended", height=6)
         for col, w in zip(cols, [100, 320, 80, 180]):
             self.scan_tree.heading(col, text=col)
             self.scan_tree.column(col, width=w, minwidth=40)
-        scan_sb = ttk.Scrollbar(scan_tree_frame, orient="vertical",
-                                 command=self.scan_tree.yview)
+        scan_sb = ttk.Scrollbar(stf, orient="vertical", command=self.scan_tree.yview)
         self.scan_tree.configure(yscrollcommand=scan_sb.set)
         self.scan_tree.pack(side="left", fill="both", expand=True)
         scan_sb.pack(side="right", fill="y")
 
+        # C盘内容分析区（基准对比）
+        watch_frame = tk.LabelFrame(sb_body,
+                                     text="C盘内容分析（软件/pip包/大文件 — 基准对比）",
+                                     bg=BG, fg="#f9e2af", font=("微软雅黑",10), padx=8, pady=6)
+        watch_frame.pack(fill="x", padx=16, pady=4)
+        wbr = tk.Frame(watch_frame, bg=BG); wbr.pack(fill="x")
+        StyledButton(wbr, "📌 设为基准", self._set_baseline, ACCENT).pack(side="left", padx=4)
+        StyledButton(wbr, "🔍 扫描新增", self._scan_c_content).pack(side="left", padx=4)
+        StyledButton(wbr, "🗑 卸载/删除选中", self._uninstall_selected, DANGER).pack(side="left", padx=4)
+        StyledButton(wbr, "🧹 清空列表", self._clear_watch_list).pack(side="left", padx=4)
+        self._watch_status = tk.Label(wbr, text="● 未扫描", bg=BG, fg=TEXT_DIM, font=("微软雅黑",9))
+        self._watch_status.pack(side="left", padx=8)
+        wcols = ("类型", "名称", "位置/版本", "大小")
+        wtf = tk.Frame(watch_frame, bg=BG); wtf.pack(fill="both", expand=True, pady=4)
+        self.watch_tree = ttk.Treeview(wtf, columns=wcols, show="headings",
+                                        style="Scan.Treeview", selectmode="extended", height=6)
+        for col, w in zip(wcols, [80, 200, 280, 80]):
+            self.watch_tree.heading(col, text=col)
+            self.watch_tree.column(col, width=w, minwidth=40)
+        wsb = ttk.Scrollbar(wtf, orient="vertical", command=self.watch_tree.yview)
+        self.watch_tree.configure(yscrollcommand=wsb.set)
+        self.watch_tree.pack(side="left", fill="both", expand=True)
+        wsb.pack(side="right", fill="y")
+        self.watch_tree.tag_configure("app", foreground="#89b4fa")
+        self.watch_tree.tag_configure("pip", foreground=ACCENT2)
+        self.watch_tree.tag_configure("file", foreground="#f9e2af")
+
+        # 零散文件管理区
+        loose_frame = tk.LabelFrame(sb_body, text="零散文件管理（文档/图片/压缩包等）",
+                                     bg=BG, fg=TEXT_DIM, font=("微软雅黑",10), padx=8, pady=6)
+        loose_frame.pack(fill="x", padx=16, pady=4)
+        lbr = tk.Frame(loose_frame, bg=BG); lbr.pack(fill="x")
+        StyledButton(lbr, "📂 打开目录", self._loose_open_folder).pack(side="left", padx=4)
+        StyledButton(lbr, "➡ 移动到D盘", self._loose_move_to_d).pack(side="left", padx=4)
+        StyledButton(lbr, "🗑 删除选中", self._loose_delete, DANGER).pack(side="left", padx=4)
+        StyledButton(lbr, "🧹 清空",
+                     lambda: self.loose_tree.delete(*self.loose_tree.get_children())).pack(side="left", padx=4)
+        lcols = ("时间", "文件名", "所在目录", "大小")
+        ltf = tk.Frame(loose_frame, bg=BG); ltf.pack(fill="both", expand=True, pady=4)
+        self.loose_tree = ttk.Treeview(ltf, columns=lcols, show="headings",
+                                        style="Scan.Treeview", selectmode="extended", height=5)
+        for col, w in zip(lcols, [90, 160, 280, 80]):
+            self.loose_tree.heading(col, text=col)
+            self.loose_tree.column(col, width=w, minwidth=40)
+        lsb = ttk.Scrollbar(ltf, orient="vertical", command=self.loose_tree.yview)
+        self.loose_tree.configure(yscrollcommand=lsb.set)
+        self.loose_tree.pack(side="left", fill="both", expand=True)
+        lsb.pack(side="right", fill="y")
+
         # 日志
-        self.clean_log = tk.Text(frame, bg=BG2, fg=TEXT, font=("Consolas",9),
-                                  relief="flat", state="disabled", height=6)
+        self.clean_log = tk.Text(sb_body, bg=BG2, fg=TEXT, font=("Consolas",9),
+                                  relief="flat", state="disabled", height=4)
         self.clean_log.pack(fill="x", padx=16, pady=4)
         self.clean_log.tag_config("ok",  foreground=ACCENT2)
         self.clean_log.tag_config("err", foreground=DANGER)
@@ -1954,6 +2071,169 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         except Exception as e:
             messagebox.showerror("失败", str(e))
 
+
+
+    # ── C盘内容分析方法 ──────────────────────────
+
+    def _set_baseline(self):
+        self._watch_status.config(text='● 建立基准中...', fg='#f9e2af')
+        def do():
+            data = self._collect_c_content()
+            import json as _j
+            with open(r'C:\Users\25789\AppData\Roaming\KHY小工具\c_baseline.json', 'w', encoding='utf-8') as f:
+                _j.dump(data, f, ensure_ascii=False, indent=2)
+            count = len(data.get('apps',[])) + len(data.get('pips',[])) + len(data.get('folders',[]))
+            self.after(0, lambda: self._watch_status.config(
+                text='✓ 基准已建立（' + str(count) + ' 项）', fg=ACCENT2))
+            self.after(0, lambda: messagebox.showinfo('基准已建立',
+                '已记录当前C盘状态：\n'
+                '  软件：' + str(len(data.get('apps',[]))) + ' 个\n'
+                '  pip包：' + str(len(data.get('pips',[]))) + ' 个\n'
+                '  大文件夹：' + str(len(data.get('folders',[]))) + ' 个\n\n'
+                '以后点「扫描新增」可对比新增内容'))
+        import threading; threading.Thread(target=do, daemon=True).start()
+
+    def _scan_c_content(self):
+        import json as _j, threading
+        baseline_path = r'C:\Users\25789\AppData\Roaming\KHY小工具\c_baseline.json'
+        if not os.path.exists(baseline_path):
+            if messagebox.askyesno('未设基准', '还没有建立基准。\n\n是否现在建立基准？'):
+                self._set_baseline()
+            return
+        self._watch_status.config(text='● 扫描中...', fg='#f9e2af')
+        self.watch_tree.delete(*self.watch_tree.get_children())
+        def do():
+            with open(baseline_path, encoding='utf-8') as f:
+                baseline = _j.load(f)
+            current = self._collect_c_content()
+            base_apps    = set(baseline.get('apps', []))
+            base_pips    = set(baseline.get('pips', []))
+            base_folders = set(b['path'] for b in baseline.get('folders', []))
+            results = []
+            for name in current.get('apps', []):
+                if name not in base_apps:
+                    results.append(('新增软件', name, 'C盘已安装', '', 'app'))
+            for name in current.get('pips', []):
+                if name not in base_pips:
+                    results.append(('新增pip包', name, 'Python包', '', 'pip'))
+            for item in current.get('folders', []):
+                if item['path'] not in base_folders:
+                    results.append(('新增文件夹', item['name'], item['path'], item['size'], 'file'))
+            def update():
+                self.watch_tree.delete(*self.watch_tree.get_children())
+                if not results:
+                    self._watch_status.config(text='✓ 无新增内容', fg=ACCENT2)
+                    return
+                for ftype, name, loc, size, tag in results:
+                    self.watch_tree.insert('', 'end', values=(ftype,name,loc,size), tags=(tag,))
+                self._watch_status.config(text='● 新增 ' + str(len(results)) + ' 项', fg='#f9e2af')
+            self.after(0, update)
+        threading.Thread(target=do, daemon=True).start()
+
+    def _collect_c_content(self):
+        result = {'apps': [], 'pips': [], 'folders': []}
+        try:
+            import winreg
+            seen = set()
+            for root in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+                for sub in [r'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                            r'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall']:
+                    try:
+                        key = winreg.OpenKey(root, sub)
+                        for j in range(winreg.QueryInfoKey(key)[0]):
+                            try:
+                                sk = winreg.OpenKey(key, winreg.EnumKey(key, j))
+                                name = winreg.QueryValueEx(sk, 'DisplayName')[0]
+                                loc = ''
+                                try: loc = winreg.QueryValueEx(sk, 'InstallLocation')[0]
+                                except Exception: pass
+                                if name and name not in seen:
+                                    if not loc or loc.upper().startswith('C:'):
+                                        seen.add(name); result['apps'].append(name)
+                            except Exception: pass
+                    except Exception: pass
+        except Exception: pass
+        try:
+            py = find_python() or r'D:\Python312\python.exe'
+            r2 = subprocess.run([py, '-m', 'pip', 'list', '--format=columns'],
+                                capture_output=True, text=True, timeout=15, creationflags=0x08000000)
+            for line in r2.stdout.splitlines()[2:]:
+                parts = line.split()
+                if parts: result['pips'].append(parts[0])
+        except Exception: pass
+        for base in [r'C:\Users', r'C:\ProgramData']:
+            if not os.path.exists(base): continue
+            try:
+                for entry in os.scandir(base):
+                    if not entry.is_dir(follow_symlinks=False): continue
+                    try:
+                        total = 0
+                        for rt, dirs, files in os.walk(entry.path):
+                            dirs[:] = [d for d in dirs if d not in ('$Recycle.Bin','System Volume Information')]
+                            for f in files:
+                                try: total += os.path.getsize(os.path.join(rt, f))
+                                except Exception: pass
+                            if total > 500*1024*1024: break
+                        if total > 100*1024*1024:
+                            result['folders'].append({'name': entry.name, 'path': entry.path,
+                                                      'size': str(total//1024//1024) + ' MB'})
+                    except Exception: pass
+            except Exception: pass
+        return result
+
+    def _uninstall_selected(self):
+        sel = self.watch_tree.selection()
+        if not sel: return
+        for item in sel:
+            vals = self.watch_tree.item(item)['values']
+            ftype, name = str(vals[0]), str(vals[1])
+            if '软件' in ftype:
+                if messagebox.askyesno('卸载软件', '将打开系统卸载程序，请手动卸载：\n' + name):
+                    subprocess.Popen(['control','appwiz.cpl'], shell=True)
+            elif 'pip' in ftype:
+                if messagebox.askyesno('卸载pip包', '确认卸载 ' + name + '？'):
+                    py = find_python() or r'D:\Python312\python.exe'
+                    subprocess.run([py,'-m','pip','uninstall','-y',name], creationflags=0x08000000)
+                    self.watch_tree.delete(item)
+                    messagebox.showinfo('完成', name + ' 已卸载')
+            elif '文件夹' in ftype:
+                loc = str(vals[2])
+                if messagebox.askyesno('删除文件夹', '确认删除？此操作不可恢复！\n' + loc):
+                    import shutil
+                    try: shutil.rmtree(loc); self.watch_tree.delete(item)
+                    except Exception as e: messagebox.showerror('删除失败', str(e))
+
+    def _clear_watch_list(self):
+        self.watch_tree.delete(*self.watch_tree.get_children())
+        self._watch_status.config(text='● 未扫描', fg=TEXT_DIM)
+
+    def _loose_open_folder(self):
+        sel = self.loose_tree.selection()
+        if not sel: return
+        subprocess.Popen(['explorer', self.loose_tree.item(sel[0])['values'][2]], shell=False)
+
+    def _loose_move_to_d(self):
+        import shutil
+        sel = self.loose_tree.selection()
+        if not sel: return
+        dest = r'D:\从C盘移入'
+        os.makedirs(dest, exist_ok=True)
+        for item in sel:
+            v = self.loose_tree.item(item)['values']
+            try:
+                shutil.move(os.path.join(str(v[2]),str(v[1])), os.path.join(dest,str(v[1])))
+                self.loose_tree.delete(item)
+            except Exception as e: messagebox.showerror('移动失败', str(e))
+        messagebox.showinfo('完成', '已移动到 ' + dest)
+
+    def _loose_delete(self):
+        sel = self.loose_tree.selection()
+        if not sel: return
+        if not messagebox.askyesno('确认', '删除选中文件？'): return
+        for item in sel:
+            v = self.loose_tree.item(item)['values']
+            try: os.remove(os.path.join(str(v[2]),str(v[1]))); self.loose_tree.delete(item)
+            except Exception as e: messagebox.showerror('删除失败', str(e))
 
 if __name__ == "__main__":
     app = App()

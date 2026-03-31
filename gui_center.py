@@ -755,7 +755,7 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                         # 显示进度窗口
                         prog_win = tk.Toplevel(self)
                         prog_win.title("同步中")
-                        prog_win.geometry("380x120")
+                        prog_win.geometry("400x140")
                         prog_win.configure(bg=BG)
                         prog_win.resizable(False, False)
                         tk.Label(prog_win, text=f"正在压缩并上传「{tool['name']}」",
@@ -763,18 +763,36 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                         prog_lbl = tk.Label(prog_win, text="准备中...",
                                             bg=BG, fg=TEXT_DIM, font=("微软雅黑",9))
                         prog_lbl.pack()
-                        pb = ttk.Progressbar(prog_win, mode="indeterminate", length=320)
+                        pb = ttk.Progressbar(prog_win, mode="indeterminate", length=340)
                         pb.pack(pady=8); pb.start(10)
 
                         orig_toast = self._sync_toast
+                        pb_var = tk.IntVar(value=0)
+                        # 切换为确定式进度条
+                        pb.stop()
+                        pb.config(mode="determinate", variable=pb_var, maximum=100)
+
                         def _toast_with_update(msg, ok=True):
                             orig_toast(msg, ok)
                             try:
                                 prog_lbl.config(text=msg[:60],
                                                 fg=ACCENT2 if ok else DANGER)
-                                if "完成" in msg or "失败" in msg:
-                                    pb.stop()
+                                # 根据消息更新进度
+                                if "压缩" in msg:
+                                    pb_var.set(20)
+                                elif "分卷" in msg or "卷上传" in msg:
+                                    # 解析 [x/n] 格式
+                                    import re as _re
+                                    m = _re.search(r'\[(\d+)/(\d+)\]', msg)
+                                    if m:
+                                        cur, total = int(m.group(1)), int(m.group(2))
+                                        pct = 20 + int(cur / total * 75)
+                                        pb_var.set(pct)
+                                elif "完成" in msg:
+                                    pb_var.set(100)
                                     prog_win.after(2000, prog_win.destroy)
+                                elif "失败" in msg:
+                                    prog_win.after(3000, prog_win.destroy)
                             except Exception:
                                 pass
                         self._sync_toast = _toast_with_update

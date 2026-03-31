@@ -416,9 +416,15 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             self._sync_toast(f"「{name}」较大，已跳过 Git 同步" +
                              ("，网盘链接已保存" if pan_url else ""))
 
-    def _split_and_sync(self, src_path, tool_name):
+    def _split_and_sync(self, src_path, tool_name, progress_cb=None):
         """分卷压缩大文件并推送到 Git，优先用7z，降级用zip"""
         import math, threading, shutil
+
+        def _notify(msg, ok=True):
+            """同时更新 toast 和进度回调"""
+            self.after(0, lambda m=msg, o=ok: self._sync_toast(m, o))
+            if progress_cb:
+                self.after(0, lambda m=msg, o=ok: progress_cb(m, o))
 
         PART_SIZE = 90 * 1024 * 1024  # 90MB 每卷
 
@@ -444,25 +450,20 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                 z7 = find_7z()
 
                 if z7:
-                    self.after(0, lambda: self._sync_toast(
-                        f"正在7z压缩「{tool_name}」（可能需要几分钟）..."))
+                    _notify(f"正在7z压缩「{tool_name}」（可能需要几分钟）...")
                     retcode = subprocess.call(
                         [z7, "a", "-t7z", "-mx=1", "-ssw", "-v90m",
                          f"{out_base}.7z", src_path],
                         creationflags=0x08000000)
                     if retcode > 1:
                         raise Exception(f"7z 返回错误码 {retcode}")
-                    # 找生成的分卷文件
-                    part_files = sorted([
-                        os.path.join(SCRIPT_DIR, f)
-                        for f in os.listdir(SCRIPT_DIR)
-                        if f.startswith(f"_tmp_{safe_name}.7z")
-                    ])
+                    # 找生成的分卷文件（在 tmp_dir 里）
+                    import glob as _glob
+                    part_files = sorted(_glob.glob(f"{out_base}.7z*"))
                 else:
                     # 降级：Python zipfile 分卷
                     import zipfile
-                    self.after(0, lambda: self._sync_toast(
-                        f"未找到7z，使用zip压缩「{tool_name}」..."))
+                    _notify(f"未找到7z，使用zip压缩「{tool_name}」...")
                     zip_path = f"{out_base}.zip"
                     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED,
                                          compresslevel=9) as zf:
@@ -474,7 +475,6 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                                         fp, os.path.dirname(src_path)))
                         else:
                             zf.write(src_path, os.path.basename(src_path))
-                    # 手动分卷
                     zip_size = os.path.getsize(zip_path)
                     parts = math.ceil(zip_size / PART_SIZE)
                     part_files = []
@@ -487,19 +487,16 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                     os.unlink(zip_path)
 
                 total_parts = len(part_files)
-                self.after(0, lambda: self._sync_toast(
-                    f"压缩完成，共 {total_parts} 卷，开始上传..."))
+                _notify(f"压缩完成，共 {total_parts} 卷，开始上传...")
 
                 for i, pf in enumerate(part_files):
+                    _notify(f"上传分卷 [{i+1}/{total_parts}]...")
                     self._git_sync(pf, f"{tool_name} [{i+1}/{total_parts}]")
 
-                self.after(0, lambda: self._sync_toast(
-                    f"✓ 「{tool_name}」已分 {total_parts} 卷上传完成"))
+                _notify(f"✓ 「{tool_name}」已分 {total_parts} 卷上传完成")
 
             except Exception as e:
-                err = str(e)
-                self.after(0, lambda: self._sync_toast(
-                    f"分卷上传失败：{err[:100]}", ok=False))
+                _notify(f"分卷上传失败：{str(e)[:100]}", ok=False)
             finally:
                 # 清理所有临时分卷文件
                 import glob as _glob
@@ -795,12 +792,14 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                                     prog_win.after(3000, prog_win.destroy)
                             except Exception:
                                 pass
+
                         self._sync_toast = _toast_with_update
                         def _restore_toast():
                             self._sync_toast = orig_toast
                         prog_win.protocol("WM_DELETE_WINDOW",
                                           lambda: (prog_win.destroy(), _restore_toast()))
-                        self._split_and_sync(path, tool["name"])
+                        self._split_and_sync(path, tool["name"],
+                                             progress_cb=_toast_with_update)
                     else:
                         self._git_sync(path, tool["name"])
                 tk.Button(btn_area, text="☁ 同步", bg="#89dceb", fg=BG,

@@ -770,24 +770,37 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                         pb_var = tk.IntVar(value=0)
                         pb.stop()
                         pb.config(mode="determinate", variable=pb_var, maximum=100)
+                        prog_lbl.config(text="正在压缩中...")
 
-                        # 直接用线程安全的方式更新UI
+                        # 压缩阶段：定时器模拟进度（0→75%），每秒+2%
+                        _compress_done = [False]
+                        def _tick():
+                            if _compress_done[0]:
+                                return
+                            cur = pb_var.get()
+                            if cur < 75:
+                                pb_var.set(cur + 2)
+                            try: prog_win.after(1000, _tick)
+                            except Exception: pass
+                        prog_win.after(500, _tick)
+
                         def _toast_with_update(msg, ok=True):
                             try:
+                                _compress_done[0] = True  # 停止定时器
                                 prog_lbl.config(
                                     text=msg[:55],
                                     fg=ACCENT2 if ok else DANGER)
                                 import re as _re
-                                if "压缩" in msg and "完成" not in msg:
-                                    pb_var.set(15)
-                                elif m := _re.search(r'\[(\d+)/(\d+)\]', msg):
-                                    cur, tot = int(m.group(1)), int(m.group(2))
-                                    pb_var.set(20 + int(cur/tot*78))
+                                if m2 := _re.search(r'\[(\d+)/(\d+)\]', msg):
+                                    cur2, tot2 = int(m2.group(1)), int(m2.group(2))
+                                    pb_var.set(80 + int(cur2/tot2*18))
                                 elif "完成" in msg:
                                     pb_var.set(100)
                                     prog_win.after(2000, prog_win.destroy)
                                 elif "失败" in msg:
                                     prog_win.after(3000, prog_win.destroy)
+                                elif "压缩完成" in msg:
+                                    pb_var.set(80)
                                 prog_win.update_idletasks()
                             except Exception:
                                 pass

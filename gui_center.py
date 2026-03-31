@@ -425,6 +425,8 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             self.after(0, lambda m=msg, o=ok: self._sync_toast(m, o))
             if progress_cb:
                 self.after(0, lambda m=msg, o=ok: progress_cb(m, o))
+            if progress_cb:
+                self.after(0, lambda m=msg, o=ok: progress_cb(m, o))
 
         PART_SIZE = 90 * 1024 * 1024  # 90MB 每卷
 

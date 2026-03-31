@@ -437,10 +437,11 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             return None
 
         def do():
+            safe_name = re.sub(r'[\\/:*?"<>|]', "_", tool_name)
+            tmp_dir = os.environ.get("TEMP", os.path.expanduser("~"))
+            out_base = os.path.join(tmp_dir, f"_khy_{safe_name}")
             try:
                 z7 = find_7z()
-                safe_name = tool_name.replace(" ", "_")
-                out_base = os.path.join(SCRIPT_DIR, f"_tmp_{safe_name}")
 
                 if z7:
                     self.after(0, lambda: self._sync_toast(
@@ -490,11 +491,7 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                     f"压缩完成，共 {total_parts} 卷，开始上传..."))
 
                 for i, pf in enumerate(part_files):
-                    fname = os.path.basename(pf)
-                    dst = os.path.join(SCRIPT_DIR, fname)
-                    if pf != dst:
-                        shutil.move(pf, dst)
-                    self._git_sync(dst, f"{tool_name} [{i+1}/{total_parts}]")
+                    self._git_sync(pf, f"{tool_name} [{i+1}/{total_parts}]")
 
                 self.after(0, lambda: self._sync_toast(
                     f"✓ 「{tool_name}」已分 {total_parts} 卷上传完成"))
@@ -503,6 +500,12 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                 err = str(e)
                 self.after(0, lambda: self._sync_toast(
                     f"分卷上传失败：{err[:100]}", ok=False))
+            finally:
+                # 清理所有临时分卷文件
+                import glob as _glob
+                for f in _glob.glob(f"{out_base}*"):
+                    try: os.unlink(f)
+                    except Exception: pass
 
         threading.Thread(target=do, daemon=True).start()
 

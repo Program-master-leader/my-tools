@@ -745,13 +745,44 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
 
             # ☁ 同步按钮：未同步到 Git 时显示
             if git_txt in ("⚠ 未追踪", "— 本地"):
-                def _sync_tool(tool=t, path=abs_path):
+                def _sync_tool(tool=t, path=abs_path, row=row, row_bg=row_bg):
                     size_mb = self._get_path_size_mb(path)
                     if size_mb > 95:
-                        if messagebox.askyesno("文件较大",
+                        if not messagebox.askyesno("文件较大",
                             f"「{tool['name']}」约 {size_mb:.0f} MB，超出单文件限制。\n\n"
                             f"是 → 自动7z分卷压缩后上传\n否 → 取消"):
-                            self._split_and_sync(path, tool["name"])
+                            return
+                        # 显示进度窗口
+                        prog_win = tk.Toplevel(self)
+                        prog_win.title("同步中")
+                        prog_win.geometry("380x120")
+                        prog_win.configure(bg=BG)
+                        prog_win.resizable(False, False)
+                        tk.Label(prog_win, text=f"正在压缩并上传「{tool['name']}」",
+                                 bg=BG, fg=TEXT, font=("微软雅黑",10)).pack(pady=(16,4))
+                        prog_lbl = tk.Label(prog_win, text="准备中...",
+                                            bg=BG, fg=TEXT_DIM, font=("微软雅黑",9))
+                        prog_lbl.pack()
+                        pb = ttk.Progressbar(prog_win, mode="indeterminate", length=320)
+                        pb.pack(pady=8); pb.start(10)
+
+                        orig_toast = self._sync_toast
+                        def _toast_with_update(msg, ok=True):
+                            orig_toast(msg, ok)
+                            try:
+                                prog_lbl.config(text=msg[:60],
+                                                fg=ACCENT2 if ok else DANGER)
+                                if "完成" in msg or "失败" in msg:
+                                    pb.stop()
+                                    prog_win.after(2000, prog_win.destroy)
+                            except Exception:
+                                pass
+                        self._sync_toast = _toast_with_update
+                        def _restore_toast():
+                            self._sync_toast = orig_toast
+                        prog_win.protocol("WM_DELETE_WINDOW",
+                                          lambda: (prog_win.destroy(), _restore_toast()))
+                        self._split_and_sync(path, tool["name"])
                     else:
                         self._git_sync(path, tool["name"])
                 tk.Button(btn_area, text="☁ 同步", bg="#89dceb", fg=BG,

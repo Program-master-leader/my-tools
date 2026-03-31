@@ -424,7 +424,9 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             """同时更新 toast 和进度回调"""
             self.after(0, lambda m=msg, o=ok: self._sync_toast(m, o))
             if progress_cb:
-                self.after(0, lambda m=msg, o=ok: progress_cb(m, o))
+                # 直接调用，progress_cb 内部处理线程安全
+                try: progress_cb(msg, ok)
+                except Exception: pass
             if progress_cb:
                 self.after(0, lambda m=msg, o=ok: progress_cb(m, o))
 
@@ -765,41 +767,34 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
                         pb = ttk.Progressbar(prog_win, mode="indeterminate", length=340)
                         pb.pack(pady=8); pb.start(10)
 
-                        orig_toast = self._sync_toast
                         pb_var = tk.IntVar(value=0)
-                        # 切换为确定式进度条
                         pb.stop()
                         pb.config(mode="determinate", variable=pb_var, maximum=100)
 
+                        # 直接用线程安全的方式更新UI
                         def _toast_with_update(msg, ok=True):
-                            orig_toast(msg, ok)
                             try:
-                                prog_lbl.config(text=msg[:60],
-                                                fg=ACCENT2 if ok else DANGER)
-                                # 根据消息更新进度
-                                if "压缩" in msg:
-                                    pb_var.set(20)
-                                elif "分卷" in msg or "卷上传" in msg:
-                                    # 解析 [x/n] 格式
-                                    import re as _re
-                                    m = _re.search(r'\[(\d+)/(\d+)\]', msg)
-                                    if m:
-                                        cur, total = int(m.group(1)), int(m.group(2))
-                                        pct = 20 + int(cur / total * 75)
-                                        pb_var.set(pct)
+                                prog_lbl.config(
+                                    text=msg[:55],
+                                    fg=ACCENT2 if ok else DANGER)
+                                import re as _re
+                                if "压缩" in msg and "完成" not in msg:
+                                    pb_var.set(15)
+                                elif m := _re.search(r'\[(\d+)/(\d+)\]', msg):
+                                    cur, tot = int(m.group(1)), int(m.group(2))
+                                    pb_var.set(20 + int(cur/tot*78))
                                 elif "完成" in msg:
                                     pb_var.set(100)
                                     prog_win.after(2000, prog_win.destroy)
                                 elif "失败" in msg:
                                     prog_win.after(3000, prog_win.destroy)
+                                prog_win.update_idletasks()
                             except Exception:
                                 pass
 
                         self._sync_toast = _toast_with_update
-                        def _restore_toast():
-                            self._sync_toast = orig_toast
                         prog_win.protocol("WM_DELETE_WINDOW",
-                                          lambda: (prog_win.destroy(), _restore_toast()))
+                                          lambda: prog_win.destroy())
                         self._split_and_sync(path, tool["name"],
                                              progress_cb=_toast_with_update)
                     else:

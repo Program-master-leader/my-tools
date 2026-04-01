@@ -1482,6 +1482,9 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         self.clean_log.tag_config("ok",  foreground=ACCENT2)
         self.clean_log.tag_config("err", foreground=DANGER)
 
+        # 启动时自动扫描新增（有基准才扫）
+        self.after(2000, self._scan_c_content)
+
     def _scan_c_drive(self):
         """扫描C盘所有非系统目录，找出可安全清理的项目"""
         self.scan_tree.delete(*self.scan_tree.get_children())
@@ -2080,8 +2083,15 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
         def do():
             data = self._collect_c_content()
             import json as _j
-            with open(r'C:\Users\25789\AppData\Roaming\KHY小工具\c_baseline.json', 'w', encoding='utf-8') as f:
+            import datetime as _dt
+            _ts = _dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+            _bd = r'C:\Users\25789\AppData\Roaming\KHY小工具'
+            bp = os.path.join(_bd, 'c_baseline_' + _ts + '.json')
+            # 同时更新最新基准（供默认使用）
+            latest = r'C:\Users\25789\AppData\Roaming\KHY小工具\c_baseline.json'
+            with open(bp, 'w', encoding='utf-8') as f:
                 _j.dump(data, f, ensure_ascii=False, indent=2)
+            import shutil as _sh; _sh.copy2(bp, latest)
             count = len(data.get('apps',[])) + len(data.get('pips',[])) + len(data.get('folders',[]))
             self.after(0, lambda: self._watch_status.config(
                 text='✓ 基准已建立（' + str(count) + ' 项）', fg=ACCENT2))
@@ -2234,6 +2244,32 @@ class App(TkinterDnD.Tk if _DND_OK else tk.Tk):
             v = self.loose_tree.item(item)['values']
             try: os.remove(os.path.join(str(v[2]),str(v[1]))); self.loose_tree.delete(item)
             except Exception as e: messagebox.showerror('删除失败', str(e))
+
+
+    def _refresh_baseline_list(self):
+        import os, json as _j
+        bd = os.path.join(os.environ.get('APPDATA',''), 'KHY小工具')
+        items = ['最新基准']
+        for f in sorted(os.listdir(bd), reverse=False):
+            if f.startswith('c_baseline') and f.endswith('.json'):
+                items.append(f.replace('.json',''))
+        if hasattr(self, '_baseline_combo'):
+            self._baseline_combo['values'] = items
+            if self._baseline_var.get() not in items:
+                self._baseline_var.set(items[1] if len(items) > 1 else items[0])
+
+    def _delete_baseline(self):
+        import os
+        sel = self._baseline_var.get()
+        if sel == '最新基准':
+            messagebox.showwarning('提示', '请先选择要删除的历史基准')
+            return
+        bd = os.path.join(os.environ.get('APPDATA',''), 'KHY小工具')
+        fp = os.path.join(bd, sel + '.json')
+        if os.path.exists(fp) and messagebox.askyesno('确认', f'删除基准 {sel}？'):
+            os.remove(fp)
+            self._refresh_baseline_list()
+            messagebox.showinfo('完成', '基准已删除')
 
 if __name__ == "__main__":
     app = App()

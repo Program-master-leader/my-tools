@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "开发完自动 Git 备份",
+  "description": "每次 Kiro agent 完成工作后，自动将 D:\\pdf小工具 的变更提交并推送到 Gitee 和 GitHub",
+  "version": "1",
+  "when": {
+    "type": "agentStop"
+  },
+  "then": {
+    "type": "runCommand",
+    "command": "git -C \"D:\\pdf小工具\" add -A && git -C \"D:\\pdf小工具\" commit -m \"自动备份：开发完成\" --allow-empty && git -C \"D:\\pdf小工具\" push gitee main && git -C \"D:\\pdf小工具\" push origin main"
+  }
+}

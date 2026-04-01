@@ -8,6 +8,6 @@
   },
   "then": {
     "type": "runCommand",
-    "command": "git -C \"D:\\pdf小工具\" add -A && git -C \"D:\\pdf小工具\" commit -m \"自动备份：开发完成\" --allow-empty && git -C \"D:\\pdf小工具\" push gitee main && git -C \"D:\\pdf小工具\" push origin main"
+    "command": "git -C \"D:\\pdf小工具\" add -A & git -C \"D:\\pdf小工具\" commit -m \"自动备份 %DATE% %TIME%\" --allow-empty & git -C \"D:\\pdf小工具\" push gitee main & git -C \"D:\\pdf小工具\" push origin main"
   }
 }
